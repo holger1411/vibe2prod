@@ -1,6 +1,6 @@
 # vibe2prod
 
-> Take AI-generated websites from "it works on my localhost" to shippable.
+> **AI-generated sites aren't "slop" — they're drafts.** vibe2prod's job is to close the gap between draft and prod, not to shame the author. Every check has a concrete, actionable fix attached, and every fix that touches user-visible copy is proposed (not silently applied).
 
 **vibe2prod** is a Claude Code plugin that audits websites across **10 technical categories** — performance, accessibility, SEO, HTML quality, security, assets, robustness, AI-slop artifacts, responsiveness (quantitative multi-breakpoint tests), and stack freshness (live npm-registry version checks, never training knowledge) — computes a **0–100 Readiness Score**, helps you fix what it finds, and re-tests with a before/after comparison.
 
@@ -166,8 +166,6 @@ Then run it again to see the diff:
 Weights sum to 100 → the Readiness Score. Stack Freshness runs in local-project mode only; in remote-URL mode its 2 points are redistributed across the other 9 categories so the score still totals 100.
 
 ## Philosophy
-
-**AI-generated sites aren't "slop" — they're drafts.** vibe2prod's job is to close the gap between draft and prod, not to shame the author. Every check has a concrete, actionable fix attached, and every fix that touches user-visible copy is proposed (not silently applied).
 
 **Plain language plus technical rigor, not one or the other.** The report serves both a vibe-coder and a senior developer. A single finding carries the headline for the former, the measurement and reference for the latter, and a concrete fix for both.
 
