@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "vibe2prod",
-      "description": "Production-readiness auditor for AI-generated websites. Audit a live URL or your local project across 9 categories and apply fixes iteratively.",
+      "description": "Production-readiness auditor for AI-generated websites. Audit a live URL or your local project across 11 categories (including quantitative responsiveness tests and live stack-freshness checks) and apply fixes iteratively.",
       "version": "0.1.0",
       "source": "./",
       "author": {

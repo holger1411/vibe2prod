@@ -2,7 +2,7 @@
 
 > Take AI-generated websites from "it works on my localhost" to shippable.
 
-**vibe2prod** is a Claude Code plugin that audits websites across **9 categories** — performance, accessibility, SEO, HTML quality, security, legal compliance, assets, robustness, and AI-slop artifacts — then helps you fix the issues and re-test.
+**vibe2prod** is a Claude Code plugin that audits websites across **11 categories** — performance, accessibility, SEO, HTML quality, security, legal compliance, assets, robustness, AI-slop artifacts, responsiveness (quantitative multi-breakpoint tests), and stack freshness (live npm-registry version checks, never training knowledge) — then helps you fix the issues and re-test.
 
 It's built for the vibe-coder era: if you shipped with Lovable, v0, Bolt, Cursor, Claude Code, or any other AI-assisted builder, vibe2prod catches the stuff those tools don't: leftover Lorem ipsum, placeholder images, `example.com` links, fake "John Doe" testimonials, hallucinated OG tags, duplicate hero sections, missing security headers, Google Fonts via CDN (which is a GDPR issue in Germany), and so on.
 
@@ -113,7 +113,7 @@ Then run it again to see the diff:
 > Test again
 ```
 
-## The 9 audit categories
+## The 11 audit categories
 
 1. **Performance** — Lighthouse + (optional) PageSpeed Insights. Core Web Vitals, render blocking, compression.
 2. **Accessibility** — Lighthouse a11y + axe-core. Color contrast, alt text, ARIA, keyboard, touch targets.
@@ -124,6 +124,8 @@ Then run it again to see the diff:
 7. **Assets** — image formats (WebP/AVIF), responsive `srcset`, font loading, favicons, manifest, broken links.
 8. **Robustness** — console errors, compression, caching, `prefers-reduced-motion`, `prefers-color-scheme`, viewport, custom 404, noscript.
 9. **AI-Slop** — vibe2prod's signature check. Placeholder content (Lorem ipsum, "Your text here", "TODO"), broken anchors (`#`, `example.com`, `yoursite.com`), placeholder images (`via.placeholder.com`, `picsum.photos`), fake testimonials ("John Doe"), stock-logo walls, hallucinated meta tags, duplicate sections.
+10. **Responsiveness** — quantitative multi-breakpoint tests (320 / 375 / 768 / 1024 / 1280 px) via Playwright. Horizontal overflow, tap-target size (WCAG 2.5.5 + 2.5.8), body/input font-sizes, viewport meta, media-query coverage, `<img>` width/height attrs, `srcset` effectiveness, safe-area insets, content clipping. Output is a matrix, not a vibe.
+11. **Stack Freshness** — live version check against the npm registry (never training knowledge, which is 3–9 months stale). Detects outdated meta-frameworks (Next.js, Nuxt, Astro, SvelteKit, Remix), base frameworks, styling libs, build tools, TypeScript, and Node runtime against the current LTS schedule. Migration-guide URLs are fetched live via Context7.
 
 ## Philosophy
 

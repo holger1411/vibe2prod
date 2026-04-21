@@ -22,6 +22,8 @@
     "security",
     "lighthouse",
     "wcag",
+    "responsiveness",
+    "stack-freshness",
     "production-readiness",
     "claude-code",
     "skill"
