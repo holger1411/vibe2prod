@@ -1,0 +1,29 @@
+{
+  "name": "vibe2prod",
+  "description": "Production-readiness auditor for AI-generated websites. Audit a live URL or your local project across performance, accessibility, SEO, security, legal compliance, and AI-slop artifacts — then apply fixes and re-test.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Holger Koenemann",
+    "url": "https://github.com/holger1411"
+  },
+  "homepage": "https://github.com/holger1411/vibe2prod",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/holger1411/vibe2prod.git"
+  },
+  "license": "MIT",
+  "keywords": [
+    "audit",
+    "ai-slop",
+    "vibe-coding",
+    "performance",
+    "accessibility",
+    "seo",
+    "security",
+    "lighthouse",
+    "wcag",
+    "production-readiness",
+    "claude-code",
+    "skill"
+  ]
+}

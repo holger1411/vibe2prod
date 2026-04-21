@@ -1,0 +1,29 @@
+# Audit artifacts (generated during skill runs)
+lh-report.json
+lh-a11y.json
+lh-seo.json
+psi-report.json
+w3c-report.json
+page.html
+headers.txt
+vibe2prod-server.log
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Env
+.env
+.env.local
+.env.*.local

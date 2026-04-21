@@ -1,0 +1,29 @@
+{
+  "name": "vibe2prod",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Claude Code plugin that audits AI-generated websites for production readiness and helps fix issues iteratively.",
+  "keywords": [
+    "claude-code",
+    "plugin",
+    "audit",
+    "lighthouse",
+    "accessibility",
+    "seo",
+    "ai-slop",
+    "vibe-coding"
+  ],
+  "author": {
+    "name": "Holger Koenemann",
+    "url": "https://github.com/holger1411"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/holger1411/vibe2prod",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/holger1411/vibe2prod.git"
+  },
+  "bugs": {
+    "url": "https://github.com/holger1411/vibe2prod/issues"
+  }
+}

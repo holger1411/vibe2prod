@@ -1,0 +1,20 @@
+{
+  "name": "vibe2prod",
+  "description": "Local marketplace for the vibe2prod plugin.",
+  "owner": {
+    "name": "Holger Koenemann",
+    "url": "https://github.com/holger1411"
+  },
+  "plugins": [
+    {
+      "name": "vibe2prod",
+      "description": "Production-readiness auditor for AI-generated websites. Audit a live URL or your local project across 9 categories and apply fixes iteratively.",
+      "version": "0.1.0",
+      "source": "./",
+      "author": {
+        "name": "Holger Koenemann",
+        "url": "https://github.com/holger1411"
+      }
+    }
+  ]
+}
