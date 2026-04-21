@@ -8,8 +8,8 @@
   "plugins": [
     {
       "name": "vibe2prod",
-      "description": "Production-readiness auditor for AI-generated websites. Audit a live URL or your local project across 11 categories (including quantitative responsiveness tests and live stack-freshness checks) and apply fixes iteratively.",
-      "version": "0.1.0",
+      "description": "Production-readiness auditor for AI-generated websites. 10 technical categories, 0-100 Readiness Score, dual-audience layered report (vibe-coders + pros), interactive or autopilot fixing, fix-me.md handoff for other coding agents.",
+      "version": "0.2.0",
       "source": "./",
       "author": {
         "name": "Holger Koenemann",

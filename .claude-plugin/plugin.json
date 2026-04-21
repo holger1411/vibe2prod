@@ -1,7 +1,7 @@
 {
   "name": "vibe2prod",
-  "description": "Production-readiness auditor for AI-generated websites. Audit a live URL or your local project across performance, accessibility, SEO, security, legal compliance, and AI-slop artifacts — then apply fixes and re-test.",
-  "version": "0.1.0",
+  "description": "Production-readiness auditor for AI-generated websites. Audit a live URL or your local project across 10 technical categories, get a 0-100 Readiness Score, apply fixes interactively or via autopilot, and export a handoff brief for other coding agents.",
+  "version": "0.2.0",
   "author": {
     "name": "Holger Koenemann",
     "url": "https://github.com/holger1411"
@@ -24,6 +24,7 @@
     "wcag",
     "responsiveness",
     "stack-freshness",
+    "readiness-score",
     "production-readiness",
     "claude-code",
     "skill"

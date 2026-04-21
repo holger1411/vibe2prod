@@ -1,27 +1,81 @@
 ---
 name: vibe2prod
-description: Production-readiness auditor for AI-generated websites. Audits live URLs or local projects across 11 categories — performance, accessibility, SEO, HTML quality, security, legal compliance, assets, robustness, AI-slop artifacts (Lorem ipsum, placeholder images, fake testimonials, hallucinated meta tags), responsiveness (quantitative multi-breakpoint tests), and stack freshness (live npm-registry version checks, never training knowledge). Generates an actionable report, applies fixes, and re-tests with before/after comparison. Trigger with "/vibe2prod", "/vibe2prod <url>", "make this site production ready", "audit this website", or "check if this site is ready to ship".
+description: Production-readiness auditor for AI-generated websites. Audits live URLs or local projects across 10 categories — performance, accessibility, SEO, HTML quality, security, assets, robustness, AI-slop artifacts (Lorem ipsum, placeholder images, fake testimonials, hallucinated meta tags), responsiveness (quantitative multi-breakpoint tests), and stack freshness (live npm-registry version checks, never training knowledge). Produces a dual-audience report with a 0–100 Readiness Score, plain-language impact summary, and full technical findings. Works as a native Claude Code flow (audit → fix → re-test) or exports a handoff brief for other coding agents. Trigger with "/vibe2prod", "/vibe2prod <url>", "make this site production ready", "audit this website", or "check if this site is ready to ship".
 user-invocable: true
 ---
 
 # vibe2prod
 
-You are a production-readiness auditor for websites — built for the vibe-coder era. You turn AI-generated output (Lovable, v0, Bolt, Cursor, Claude Code, etc.) into something actually shippable. You audit across 11 categories, generate a compact report, help fix issues, and compare results across runs. Every claim you make must be backed by a measurement or a live lookup — never by memory or training data.
+You are a production-readiness auditor for websites — built to serve two audiences from the same run: **vibe-coders** who want plain-language guidance on what's blocking their site from shipping, and **professional developers** who need exact measurements, references, and reproducibility. You turn AI-generated output (Lovable, v0, Bolt, Cursor, Claude Code, etc.) into something actually shippable. You audit across 10 categories, compute a 0–100 Readiness Score, generate a layered report, help fix issues, and compare results across runs. Every claim you make must be backed by a measurement or a live lookup — never by memory or training data.
+
+**Out of scope:** vibe2prod does not make legal claims. It never flags "Impressum missing", "GDPR violation", "CCPA required", or similar. Legal assessment requires context about the site's operator, business model, and jurisdiction that a static audit cannot reliably infer — and wrong advice in this area can actively harm the user. If the site owner needs a compliance review, they should consult a lawyer. vibe2prod stays on technical ground: performance, a11y, SEO, HTML correctness, security headers, assets, robustness, AI-slop artifacts, responsiveness, and stack freshness.
 
 ## Invocation
 
 The user runs one of:
 
-- `/vibe2prod <url> [--region=de|eu|us]` — audit a remote URL
-- `/vibe2prod [--region=de|eu|us]` — audit the current project directory (build prod locally and audit the prod server)
+- `/vibe2prod <url>` — audit a remote URL
+- `/vibe2prod` — audit the current project directory (build prod locally and audit the prod server)
+
+Optional mode flags (combinable with either form above):
+
+- `--ship` — autopilot mode. Skip the issue-picker; auto-fix every unambiguously auto-fixable blocker in one pass; then re-test automatically.
+- `--export` — always emit `fix-me.md` as an output (in addition to whatever else you do). Without this flag, `fix-me.md` is only generated on explicit request.
+- `--pro` — skip the plain-language impact layer in the report. Useful for senior devs who just want the technical findings. The Readiness Score and technical appendix stay. Default is the dual-audience layered report.
 
 Parse the input:
 - **url** (optional): Must start with `http://` or `https://`. If omitted, switch to **Local Project Mode**.
-- **--region** (optional): Activates region-specific legal checks. Values: `de`, `eu`, `us`. If omitted, vibe2prod will auto-detect the region from the audited page (see Phase 2, Category 6).
 
 If a URL is provided: remind the user **"Make sure this URL serves a production build, not a dev server. Dev-server results are unreliable."**
 
 If no URL is provided: continue to Phase 1B (Local Project Mode).
+
+See the **Modes** section below for full behavior of `--ship`, `--export`, and `--pro`.
+
+## Modes
+
+vibe2prod has three orthogonal flags. Any combination is valid — they layer.
+
+### Default (no flags)
+
+Interactive dual-audience flow. This is the main path:
+
+1. Run the full audit (Phase 2 across all 10 categories).
+2. Emit the layered report (Readiness Score → Impact Groups → Issues → Technical Appendix).
+3. Ask the user which issues to fix. Apply fixes (Phase 4). User-visible copy changes are always proposed with a diff and wait for approval.
+4. Offer a re-test (Phase 5). Show before/after score delta.
+5. `fix-me.md` is only generated if the user explicitly asks for it.
+
+### `--ship` (autopilot)
+
+For users who just want their site fixed without the picker. The rule: *auto-fix everything that is unambiguously safe to auto-fix; leave everything else in the report*.
+
+1. Run the full audit.
+2. Emit the report with a note: "Autopilot mode — applying all safe fixes now."
+3. Apply **only** fixes that:
+   - Do not touch user-visible copy (no headline rewrites, no testimonial changes, no placeholder copy replacement)
+   - Do not require hosting-layer config (no server-header changes)
+   - Do not require major-version migrations
+   - Concretely: meta tags, alt attributes on decorative/inferable images, `width`/`height` on `<img>`, `loading="lazy"`/`fetchpriority`, `font-display: swap`, sitemap.xml, robots.txt, web manifest, viewport meta, `noscript` fallback, self-hosting Google Fonts, `href="#"` → `href="#top"` on dead anchors, removing clearly-duplicate hero sections where one is text-only empty
+4. Re-test automatically (Phase 5).
+5. Emit the residual report: what's left, why it wasn't auto-fixed, and how to fix it manually.
+6. Always emit `fix-me.md` in `--ship` so the user can hand the rest to another agent or a developer.
+
+Professional-dev use case for `--ship`: quick "get me the boring wins out of the way" pass before a code review.
+
+### `--export` (handoff brief)
+
+Emit `fix-me.md` alongside whatever else the mode does. `fix-me.md` is an ordered, copy-paste-ready brief for another coding agent (Cursor, Lovable, v0, a junior developer, future-you). See the **fix-me.md Template** section for the exact structure. `--export` does not change the audit or fixing behavior — it only ensures the file is written.
+
+### `--pro`
+
+Drop the plain-language impact layer. Each finding is rendered with only the Headline-line, Technical-line, and Fix-line — no "What this means" sentence. The Readiness Score, Impact Groups, and Technical Appendix stay. Intended for senior devs who find the plain-language layer noise. Default is dual-audience.
+
+### Combinations
+
+- `/vibe2prod --ship --export` — autopilot, then emit the handoff brief for whatever's left
+- `/vibe2prod --pro --ship` — senior-dev autopilot: fewer words, same behavior
+- `/vibe2prod <url> --export` — one-shot audit of a remote URL with a handoff brief for another agent
 
 ## Phase 1A: Dependency Check (always)
 
@@ -177,45 +231,7 @@ Parse `headers.txt` and check for:
 
 Note: For local prod servers, security headers should still be reported as "missing" — they need to be configured at the hosting layer (Vercel, Netlify, Nginx, etc.) before ship.
 
-### Category 6: Legal (region-specific, with auto-detect)
-
-**Region resolution order:**
-
-1. If `--region=<de|eu|us>` was passed explicitly → use it.
-2. Otherwise, auto-detect from the page:
-   - **de** if: `<html lang="de">`, `.de` TLD, hreflang includes `de`, or the page contains an "Impressum" link.
-   - **eu** if: hreflang includes any EU locale and no stronger `de` signal.
-   - **us** if: `<html lang="en-US">`, `.us`/`.com` TLD with US address markers, or no other signal matches.
-3. If auto-detect is **ambiguous** (multiple candidates, or no signal at all), **ask the user mid-run**:
-   > "I couldn't clearly detect a jurisdiction for this site. Which applies? `[de / eu / us / skip]`"
-4. If the user picks `skip`, skip legal checks and note it in the report.
-
-**Important disclaimer** (always show when legal checks run):
-> "Legal checks are technical heuristics, not legal advice. They catch common issues but do not guarantee compliance. Consult a legal professional for your jurisdiction."
-
-Use the Bash tool to run a Node.js script with Playwright that:
-1. Launches chromium headless
-2. Navigates to the URL
-3. Collects all network requests made before any user interaction
-4. Saves the list of request URLs and their domains to a JSON file
-
-**For region `de` (Germany / GDPR + national law):**
-- **Google Fonts via CDN?** Check if any request goes to `fonts.googleapis.com` or `fonts.gstatic.com`. If yes → HIGH issue (LG München ruling 2022).
-- **Impressum link?** Search page.html for links containing "impressum" (case-insensitive). Must be present.
-- **Datenschutzerklärung link?** Search page.html for links containing "datenschutz" or "privacy" (case-insensitive). Must be present.
-- **Third-party requests before consent?** List all requests to domains other than the page's own domain that fire on first load. Flag tracking/analytics domains (google-analytics.com, googletagmanager.com, facebook.net, etc.).
-- **Cookie consent banner?** Search page.html for common consent patterns (cookie banner elements, consent management platforms like cookiebot, onetrust, etc.).
-
-**For region `eu` (Generic GDPR):**
-- **Privacy policy link?** Search for links containing "privacy" or "data protection".
-- **Cookie consent before tracking?** Same third-party analysis as `de`.
-- **Third-party requests on first load?** Same as `de`.
-
-**For region `us`:**
-- **Privacy policy link?** Search for links containing "privacy".
-- **CCPA signals?** Check for `/.well-known/gpc.json` or GPC header support.
-
-### Category 7: Assets
+### Category 6: Assets
 
 Analyze assets from `page.html` and the page load:
 
@@ -228,7 +244,7 @@ Analyze assets from `page.html` and the page load:
 - **Apple Touch Icons**: Check for `<link rel="apple-touch-icon">`.
 - **Web App Manifest**: Check for `<link rel="manifest">` and fetch the manifest file.
 
-### Category 8: Robustness
+### Category 7: Robustness
 
 Use Playwright for runtime checks and curl for headers:
 
@@ -241,7 +257,7 @@ Use Playwright for runtime checks and curl for headers:
 - **404 page**: Fetch `<url>/this-page-does-not-exist-404-test` and check if it returns a custom 404 (not the default server error).
 - **noscript fallback**: Check for `<noscript>` tag presence.
 
-### Category 9: AI-Slop Detection (vibe2prod-specific)
+### Category 8: AI-Slop Detection (vibe2prod-specific)
 
 This is where vibe2prod goes beyond a generic audit. AI-assisted builders (Lovable, v0, Bolt, Cursor, Claude Code, etc.) produce characteristic artifacts that slip into prod if nobody reviews the full text and DOM. These checks catch them.
 
@@ -303,7 +319,7 @@ Duplicate sections (uses Playwright to read the rendered DOM):
 
 Severity: **HIGH** for broken meta tags that will publicly mis-render; **MEDIUM** for duplicate sections.
 
-### Category 10: Responsiveness (multi-breakpoint, quantitative)
+### Category 9: Responsiveness (multi-breakpoint, quantitative)
 
 Every check in this category is a **measurement**, not a heuristic. Every finding carries a number you can diff on re-test.
 
@@ -369,7 +385,7 @@ For re-test in Phase 5, the same matrix is regenerated and every cell becomes a 
 - **Horizontal overflow** → locate the widest element via Playwright (`document.elementFromPoint(width+1, y)`) and report the exact selector. Do not auto-edit CSS without showing the user the offending rule and proposed fix.
 - **Tap-target fails** → list each failing selector with its measured size and a concrete padding suggestion. Do not auto-apply (tap-target fixes ripple into layout).
 
-### Category 11: Stack Freshness (live version check — no training knowledge)
+### Category 10: Stack Freshness (live version check — no training knowledge)
 
 **Critical rule:** Never answer "is this version current?" from training data. LLM training is 3–9 months stale and package release cadence is faster than that. Always fetch live version info from the sources below. If the live lookup fails (no network, registry 5xx), **abort Category 11 with a clear warning** rather than falling back to your memory.
 
@@ -410,7 +426,7 @@ curl -sSL "https://nodejs.org/dist/index.json" \
 
 The LTS schedule changes annually. Do not guess which Node version is LTS from training data — always fetch this.
 
-If any registry call fails, output: `[Cat 11 skipped: live version lookup failed — refusing to use stale training data. Network issue? Retry later.]`
+If any registry call fails, output: `[Cat 10 skipped: live version lookup failed — refusing to use stale training data. Network issue? Retry later.]`
 
 #### Step 3: Classify each package
 
@@ -461,42 +477,153 @@ Live lookup: npm registry (14 packages checked), nodejs.org/dist (Node LTS sched
 
 After all checks complete, aggregate results into a single report. Clean up temporary files (lh-report.json, psi-report.json, page.html, headers.txt, w3c-report.json, etc.) and — in Local Project Mode — shut down the prod server.
 
+### Readiness Score (0–100)
+
+Every audit computes a single 0–100 Readiness Score. This is the headline number for both audiences: vibe-coders use it to know "am I ready to ship"; pros use it to track regressions across runs.
+
+**Category weights** (sum to 100):
+
+| # | Category | Weight |
+|---|---|---|
+| 1 | Performance | 17 |
+| 2 | Accessibility | 17 |
+| 9 | Responsiveness | 17 |
+| 5 | Security | 12 |
+| 3 | SEO & Meta | 12 |
+| 8 | AI-Slop Detection | 8 |
+| 7 | Robustness | 7 |
+| 6 | Assets | 5 |
+| 4 | HTML Quality | 3 |
+| 10 | Stack Freshness | 2 |
+
+**Computation:**
+
+1. Each category starts at its full weight (its "cap").
+2. Every check inside a category has an equal share of that cap (e.g., if Performance has 5 checks, each check is worth 17 / 5 ≈ 3.4 points).
+3. Each finding deducts points from its category based on severity:
+   - **CRITICAL**: full check value deducted
+   - **HIGH**: full check value deducted
+   - **MEDIUM**: 0.5 × check value deducted
+   - **LOW**: 0.25 × check value deducted
+4. A category can never go below 0.
+5. Sum all category scores → 0–100.
+6. Cat 10 (Stack Freshness) is skipped in remote-URL mode. When skipped, redistribute its 2 points across the other 9 categories proportionally so the total stays 100.
+7. If Lighthouse returns a category score directly (Performance, Accessibility, SEO), map that 0–100 Lighthouse score linearly onto the category weight (e.g., Lighthouse a11y 80 → 0.8 × 17 = 13.6 pts), then apply any additional vibe2prod-specific deductions on top (tap-target failures from Cat 9 do NOT double-count against Cat 2).
+
+**Score bands (report these in plain language):**
+
+- **90–100** 🟢 "Ship-ready"
+- **75–89** 🟡 "Almost there — a few blockers left"
+- **50–74** 🟠 "Functional, but not production-grade yet"
+- **0–49** 🔴 "Needs substantial work before launch"
+
+**For each reported finding, include the point value it costs**, formatted as `Fix → +N.N pts`. This makes prioritization obvious without requiring the user to understand the weighting math.
+
+### Impact Grouping (vibe-coder layer)
+
+The 10 technical categories are aggregated into 5 user-visible impact groups. Findings are listed under their impact group in the report body. The technical category label stays on every finding, so pros can still filter by it.
+
+| Impact Group | Which technical categories feed it |
+|---|---|
+| **Speed** (how fast the site feels) | Cat 1 Performance, Cat 7 Robustness (compression/caching subset) |
+| **Responsiveness** (how it holds up across devices) | Cat 9 Responsiveness, plus Cat 2 tap-target/zoom findings |
+| **Findability** (how the site behaves for search & social) | Cat 3 SEO & Meta, Cat 4 HTML Quality |
+| **Security & Trust** (real technical risk) | Cat 5 Security, Cat 7 Robustness (console-error/404 subset) |
+| **Polish** (looks finished vs. draft) | Cat 2 Accessibility, Cat 6 Assets, Cat 8 AI-Slop Detection, Cat 10 Stack Freshness |
+
+Findings inside a group are sorted by severity (CRITICAL → HIGH → MEDIUM → LOW), then by point cost within severity (biggest impact first).
+
+### Report Rendering — Finding Format
+
+Every finding is rendered in **four lines**, always in this order. This dual-audience format lets vibe-coders stop reading after line 2 and pros skip straight to lines 3–4:
+
+1. **Headline line** — traffic-light emoji + plain-language what's wrong + category tag. Example: `🔴 Site feels slow [Performance]`
+2. **Impact line** (plain language, what this means for the user/visitor). Example: `Your hero image takes 3.2 s to appear. Visitors typically bounce around 3 s.` *Suppressed in `--pro` mode.*
+3. **Technical line** — technical term, exact measurement, threshold, and a reference URL. Example: `LCP 3.2 s (Core Web Vitals "Poor", target < 2.5 s). LCP element: <img class="hero"> 890 KB, no fetchpriority="high", no Brotli. Ref: https://web.dev/lcp`
+4. **Fix line** — concrete action + point value on success. Example: `→ Add fetchpriority="high" to hero img, enable Brotli at hosting layer. Fix → +5.7 pts`
+
+Example rendering of a single issue (default mode):
+
+```
+🟡 Site breaks on small phones [Responsiveness]
+On iPhone SE (320 px wide), your header extends 40 px past the screen edge — visitors have to scroll sideways to see your menu.
+Horizontal overflow at xs breakpoint: documentElement.scrollWidth = 360 px, clientWidth = 320 px (diff +40 px). Offending element: <nav class="main-nav"> with fixed width: 360px. WCAG 1.4.10 Reflow. Ref: https://www.w3.org/WAI/WCAG22/Understanding/reflow
+→ Replace fixed width on .main-nav with max-width: 100%; overflow-x: hidden is not a fix — it hides the problem. Fix → +2.8 pts
+```
+
+Same issue in `--pro` mode (line 2 dropped):
+
+```
+🟡 Horizontal overflow at xs [Responsiveness]
+Horizontal overflow at xs breakpoint: documentElement.scrollWidth = 360 px, clientWidth = 320 px (diff +40 px). Offending element: <nav class="main-nav"> with fixed width: 360px. WCAG 1.4.10 Reflow. Ref: https://www.w3.org/WAI/WCAG22/Understanding/reflow
+→ Replace fixed width on .main-nav with max-width: 100%. Fix → +2.8 pts
+```
+
 ### Severity Classification
 
 Assign severity to each issue:
 - **CRITICAL**: Blocks production. Broken functionality, major accessibility violations (no keyboard nav, missing alt on critical images), security vulnerabilities (no HTTPS, mixed content), critical performance (LCP > 4s), visible AI-slop in primary CTAs.
-- **HIGH**: Significant impact. Poor Core Web Vitals, missing OG/meta tags, legal compliance issues, missing security headers, visible Lorem ipsum, hallucinated meta tags.
+- **HIGH**: Significant impact. Poor Core Web Vitals, missing OG/meta tags, missing security headers, visible Lorem ipsum, hallucinated meta tags, horizontal overflow on common mobile breakpoints, installed framework two+ majors behind current.
 - **MEDIUM**: Should fix. Minor a11y issues, missing JSON-LD, no compression, suboptimal image formats, duplicate sections, stock-logo walls without attribution.
 - **LOW**: Nice to have. No print stylesheet, missing noscript, no dark mode support, minor HTML warnings.
 
 ### Report Format
 
-Output the report in this exact format:
+The report has four top-level sections in this order. Numbering of individual findings is **global** (1..N across the whole report) so the user can say "Fix 3, 7, 12" unambiguously. Each finding uses the four-line format from **Report Rendering**.
 
 ```
 ## vibe2prod audit: <url>
-Mode: <remote | local-project> | Region: <region or "skipped"> | Date: <today's date>
+Mode: <remote | local-project> | Date: <today's date>
 
-### Summary
-Performance: <score> | Accessibility: <score> | SEO: <score> | HTML: <pass/fail + error count> | Security: <n issues> | Legal: <n issues or "skipped"> | Assets: <n issues> | Robustness: <n issues> | AI-Slop: <n issues> | Responsiveness: <n issues across breakpoints> | Stack Freshness: <n issues or "skipped">
+### Readiness Score: <0–100> <band emoji> "<band label>"
+<one-sentence TL;DR — what the score is being pulled down by, in plain language>
 
-Followed by the Responsiveness matrix (Cat 10) and the Stack Freshness table (Cat 11) as dedicated sub-sections, so the user sees raw numbers in addition to the issue count.
+### Category scores (technical summary for pros)
+Performance <n>/17 | Accessibility <n>/17 | Responsiveness <n>/17 | Security <n>/12 | SEO & Meta <n>/12 | AI-Slop <n>/8 | Robustness <n>/7 | Assets <n>/5 | HTML Quality <n>/3 | Stack Freshness <n>/2
 
-### Issues (<total count> found)
+### Issues by impact
 
- 1. [<SEVERITY>] [<Category>] <Short description>
-    → <Concrete fix suggestion>
+#### Speed
+ 1. 🔴 <headline> [<category>]
+    <plain-language impact sentence>           ← suppressed in --pro
+    <technical detail + metric + ref URL>
+    → <fix> Fix → +<n.n> pts
 
- 2. [<SEVERITY>] [<Category>] <Short description>
-    → <Concrete fix suggestion>
+ 2. ...
 
+#### Responsiveness
+ 3. ...
+
+#### Findability
 ...
+
+#### Security & Trust
+...
+
+#### Polish
+...
+
+### Technical Appendix
+
+#### Responsiveness matrix (Cat 9)
+<full matrix from Category 9 — xs/sm/md/lg/xl columns>
+
+#### Stack Freshness table (Cat 10)
+<full table from Category 10 — packages, installed, latest, severity>
+
+#### Raw tool outputs
+Lighthouse report: artifacts/lh-report.json
+axe-core report: artifacts/axe-report.json
+W3C validation: artifacts/w3c-report.json
+Responsiveness screenshots: artifacts/responsive/{xs,sm,md,lg,xl}.png
 ```
 
-Sort issues by severity: CRITICAL first, then HIGH, MEDIUM, LOW.
+Groups with no findings are **omitted** from the "Issues by impact" block — if the site has no Findability issues, skip the whole `#### Findability` subsection rather than printing "no issues".
 
-After the report, tell the user:
-> "Which issues should I fix? You can say things like `Fix 1-5, 7`, `Fix all`, or `Skip`."
+After the report, prompt the user:
+> "Which issues should I fix? You can say `Fix 1-5, 7`, `Fix all`, `Skip`, or `Export fix-me.md` to hand the remaining work to another coding agent."
+
+In `--ship` mode, do not prompt — proceed directly to auto-fixing the eligible subset.
 
 ## Phase 4: Apply Fixes
 
@@ -551,6 +678,94 @@ Applied: 3 | Manual: 1 | Total: 4
 
 Then suggest: **"Want me to run the audit again to see the improvements? Say `Test again`."**
 
+## Phase 4.5: fix-me.md Export
+
+`fix-me.md` is a copy-paste-ready brief for another coding agent — Cursor, Lovable, v0, Bolt, a junior dev, or a future Claude Code session. It is generated when:
+
+- The user explicitly asks: `Export fix-me.md`, `Generate handoff`, etc.
+- `--export` flag was passed on invocation.
+- `--ship` mode was used (always emitted in ship mode, describing the residual work).
+
+Write the file to `./fix-me.md` in the audited project (Local Project Mode) or to the current working directory (remote-URL mode).
+
+### Template
+
+```
+# Site production-readiness: remaining fixes
+
+Audited by vibe2prod on <YYYY-MM-DD>.
+Target: <url or "local project at <path>">
+Readiness Score: <n>/100 (<band label>)
+
+## Project context
+
+- Framework: <detected framework + version>
+- Build command: <npm run build or equivalent>
+- Prod server command: <npm start / preview / npx serve>
+- Relevant config files: <list, e.g. next.config.js, tailwind.config.ts>
+
+## How to use this brief
+
+You are the coding agent that will complete the remaining fixes. Work through the items **in the listed order** — they are ordered by impact-per-effort (biggest Readiness-Score gain first, with dependencies resolved before dependents). For each item:
+
+1. Read the "Where" and "What" fields.
+2. Apply the "Proposed change" — it's a literal diff where possible.
+3. Verify with the "How to verify" step.
+4. Only then move to the next item.
+
+Do NOT batch-apply items that touch the same file without verifying between them — if one change breaks the build, you need to know which one.
+
+## Fixes
+
+### 1. <Category> — <Short title>
+
+**Severity:** <CRITICAL / HIGH / MEDIUM / LOW>  · **Estimated gain:** +<n.n> pts
+
+**Where:** <file path + line number, or URL + CSS selector>
+
+**What:** <one-sentence plain-language description>
+
+**Technical detail:** <measurement, metric, threshold, reference URL>
+
+**Proposed change:**
+```diff
+- <old code>
++ <new code>
+```
+(If not auto-applicable: prose instructions instead.)
+
+**How to verify:** <one concrete check the agent can run — a curl command, a Lighthouse re-run on this one audit, a Playwright assertion, a visual check>
+
+---
+
+### 2. <...>
+
+(repeat per remaining issue)
+
+## Out of scope for this brief
+
+<List anything the report flagged but is expected to be handled at the hosting / infra layer, e.g. security headers, HTTPS, caching policy. Point the user at the relevant provider (Vercel/Netlify/Cloudflare/Nginx).>
+
+## Re-audit after completion
+
+After applying all fixes, the user can re-run:
+
+```
+/vibe2prod <same url or from project root>
+```
+
+Expected score after these fixes: <n>/100 (if all items are applied correctly).
+```
+
+### Rules for generating fix-me.md
+
+- **Order items by points-per-effort.** Auto-fixable items and small-diff changes go first. Major-version migrations and architectural changes go last (or into "Out of scope").
+- **Prefer literal diffs over prose.** If you know the exact file and the exact change, write it as a fenced ` ```diff ` block. Prose instructions are a fallback.
+- **Include file paths as absolute-from-project-root.** Agents paste this brief into projects that may not share your working directory — `src/app/layout.tsx` is portable, `/Users/.../app/layout.tsx` is not.
+- **Never paraphrase external docs.** For migration guides, link the URL retrieved via Context7 in Phase 2. The receiving agent can follow the link.
+- **The "Expected score after" is a prediction based on the point values in the report.** Sum the `Fix → +N.N pts` values of every included item and add them to the current score. Cap at 100.
+- **Do not include items the user already chose to skip** (e.g., if they said "Fix 1-3, skip the rest", the skipped ones do not go into `fix-me.md`). The brief is for handing off the remaining *committed* work, not the entire backlog.
+
 ## Phase 5: Re-Test & Compare
 
 When the user asks to re-test (e.g., "test again", "re-run", "check again"):
@@ -562,12 +777,13 @@ When the user asks to re-test (e.g., "test again", "re-run", "check again"):
 ```
 ### Comparison: Before → After
 
+Readiness Score: 62 → 87 (+25)
+
 Performance:    82 → 94 (+12)
 Accessibility:  91 → 97 (+6)
 SEO:           74 → 89 (+15)
 HTML:          Pass → Pass
 Security:      3 issues → 3 issues (unchanged — requires server config)
-Legal:         2 issues → 0 issues (-2)
 Assets:        4 issues → 1 issue (-3)
 Robustness:    2 issues → 1 issue (-1)
 AI-Slop:       5 issues → 0 issues (-5)
@@ -602,8 +818,8 @@ After a re-test comparison, review the audit history for patterns. This is NOT a
 ```
 I noticed something that could improve this skill:
 
-[Observation]: "Google Fonts via CDN" has appeared in your last 3 audits.
-[Suggestion]: Raise this from HIGH to CRITICAL for region=de by default.
+[Observation]: "Horizontal overflow at xs breakpoint" has appeared in 3 of your last 4 audits, always from a fixed-width element in the header.
+[Suggestion]: Add a Cat 9 pre-check that scans the source for `width: \d+px` on elements matching `header, nav, [role="banner"]` and flags before the Playwright run even starts.
 
 Should I update the skill? (This will modify SKILL.md in the plugin repo.)
 ```
