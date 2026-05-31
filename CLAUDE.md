@@ -17,6 +17,7 @@ This repo is a Claude Code plugin. Its only moving part is the `vibe2prod` skill
 3. **No aggressive image compression.** 85 % minimum, 90 % default. Always prefer format changes and `srcset` over quality reduction.
 4. **Fixes that touch visible copy require approval.** Placeholder href="#" is fine to auto-fix; replacing a hero headline is not.
 5. **Open-source discipline.** Don't commit API keys, don't embed user-specific paths, keep copy neutral.
+6. **2Prod invariants.** The gate set is **5 vetos + 27 regular gates**. Leaked secrets are veto **V5** (procedure: Cat 8.5), never a regular gate. In Local Project Mode, Sec1–Sec3 are **deferred** (denominator 24, not 27) so a clean local build can still reach READY. Tooling outages are **INCONCLUSIVE** (dropped from numerator+denominator), never a site failure. The two green bands also require Resp1 to pass. If you change the gate count, update all of: SKILL.md gate table, computation steps, report templates, fix-me.md template, and README. Keep category numbering canonical (Responsiveness = Cat 9, Stack Freshness = Cat 10; AI-slop subsections are 8.1–8.5).
 
 ## Release flow
 
@@ -24,7 +25,3 @@ This repo is a Claude Code plugin. Its only moving part is the `vibe2prod` skill
 2. Bump version in `plugin.json`, `marketplace.json`, `package.json`.
 3. Commit with imperative English message (e.g., "Add X check to Category 9").
 4. Tag `vX.Y.Z`, push tags.
-
-## Relation to the private `prod-ready` plugin
-
-vibe2prod is the open-source descendant of a private `prod-ready` skill. The private version can stay ahead of the public one, but **never copy private-specific tweaks into this repo without review** — they may contain user-specific heuristics or client context.

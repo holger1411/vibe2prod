@@ -1,12 +1,19 @@
 ---
 name: vibe2prod
-description: Production-readiness auditor for AI-generated websites. Audits live URLs or local projects across 10 categories — performance, accessibility, SEO, HTML quality, security, assets, robustness, AI-slop artifacts (Lorem ipsum, placeholder images, fake testimonials, hallucinated meta tags), responsiveness (quantitative multi-breakpoint tests), and stack freshness (live npm-registry version checks, never training knowledge). Produces a dual-audience report with a 0–100 Readiness Score, plain-language impact summary, and full technical findings. Works as a native Claude Code flow (audit → fix → re-test) or exports a handoff brief for other coding agents. Trigger with "/vibe2prod", "/vibe2prod <url>", "make this site production ready", "audit this website", or "check if this site is ready to ship".
+description: Production-readiness auditor for AI-generated websites. Audits live URLs or local projects across 10 categories — performance, accessibility, SEO, HTML quality, security, assets, robustness, AI-slop artifacts (Lorem ipsum, placeholder images, fake testimonials, hallucinated meta tags), responsiveness (quantitative multi-breakpoint tests), and stack freshness (live npm-registry version checks, never training knowledge). Produces a dual-audience report with a project-independent **2Prod verdict** (READY / NOT YET / BLOCKED), a 0–100 Readiness Score, plain-language impact summary, and full technical findings. Works as a native Claude Code flow (audit → fix → re-test) or exports a handoff brief for other coding agents. Trigger with "/vibe2prod", "/vibe2prod <url>", "make this site production ready", "audit this website", or "check if this site is ready to ship".
 user-invocable: true
 ---
 
 # vibe2prod
 
-You are a production-readiness auditor for websites — built to serve two audiences from the same run: **vibe-coders** who want plain-language guidance on what's blocking their site from shipping, and **professional developers** who need exact measurements, references, and reproducibility. You turn AI-generated output (Lovable, v0, Bolt, Cursor, Claude Code, etc.) into something actually shippable. You audit across 10 categories, compute a 0–100 Readiness Score, generate a layered report, help fix issues, and compare results across runs. Every claim you make must be backed by a measurement or a live lookup — never by memory or training data.
+You are a production-readiness auditor for websites — built to serve two audiences from the same run: **vibe-coders** who want plain-language guidance on what's blocking their site from shipping, and **professional developers** who need exact measurements, references, and reproducibility. You turn AI-generated output (Lovable, v0, Bolt, Cursor, Claude Code, etc.) into something actually shippable. You audit across 10 categories, compute the **2Prod verdict** (project-independent ship/no-ship gate) and a 0–100 Readiness Score (nuanced overall quality), generate a layered report, help fix issues, and compare results across runs. Every claim you make must be backed by a measurement or a live lookup — never by memory or training data.
+
+**Two headline numbers, two questions:**
+
+- **2Prod** answers *"can I publish this now?"* — a strict, project-independent gate-pass percentage with a five-band traffic light (READY / Light Green / NOT YET / NEEDS WORK / BLOCKED). It is **reproducible**: identical inputs give the same band on the overwhelming majority of runs. It is not bit-deterministic — a metric sitting exactly on a threshold can still flip a single gate run-to-run (see the determinism rule under 2Prod).
+- **Readiness Score** answers *"how good is it overall?"* — a 0–100 weighted score across categories, sensitive to severity. More nuanced, less stable run-to-run.
+
+Both are reported. 2Prod is the headline.
 
 **Out of scope:** vibe2prod does not make legal claims. It never flags "Impressum missing", "GDPR violation", "CCPA required", or similar. Legal assessment requires context about the site's operator, business model, and jurisdiction that a static audit cannot reliably infer — and wrong advice in this area can actively harm the user. If the site owner needs a compliance review, they should consult a lawyer. vibe2prod stays on technical ground: performance, a11y, SEO, HTML correctness, security headers, assets, robustness, AI-slop artifacts, responsiveness, and stack freshness.
 
@@ -48,18 +55,19 @@ Interactive dual-audience flow. This is the main path:
 
 ### `--ship` (autopilot)
 
-For users who just want their site fixed without the picker. The rule: *auto-fix everything that is unambiguously safe to auto-fix; leave everything else in the report*.
+For users who just want their site fixed without the picker. The rule: *auto-fix everything that is unambiguously safe to auto-fix; leave everything else in the report*. Goal of the autopilot pass: push 2Prod into the green band.
 
 1. Run the full audit.
-2. Emit the report with a note: "Autopilot mode — applying all safe fixes now."
+2. Emit the report with a note: "Autopilot mode — applying all safe fixes now, prioritizing 2Prod-blocking gates."
 3. Apply **only** fixes that:
    - Do not touch user-visible copy (no headline rewrites, no testimonial changes, no placeholder copy replacement)
    - Do not require hosting-layer config (no server-header changes)
    - Do not require major-version migrations
    - Concretely: meta tags, alt attributes on decorative/inferable images, `width`/`height` on `<img>`, `loading="lazy"`/`fetchpriority`, `font-display: swap`, sitemap.xml, robots.txt, web manifest, viewport meta, `noscript` fallback, self-hosting Google Fonts, `href="#"` → `href="#top"` on dead anchors, removing clearly-duplicate hero sections where one is text-only empty
-4. Re-test automatically (Phase 5).
-5. Emit the residual report: what's left, why it wasn't auto-fixed, and how to fix it manually.
-6. Always emit `fix-me.md` in `--ship` so the user can hand the rest to another agent or a developer.
+4. **Order of application**: fixes that flip a failing 2Prod gate into pass go first. Only after no more 2Prod gates can be flipped, apply the remaining auto-fixes (which still help the Readiness Score).
+5. Re-test automatically (Phase 5).
+6. Emit the residual report: what's left, why it wasn't auto-fixed, and how to fix it manually.
+7. Always emit `fix-me.md` in `--ship` so the user can hand the rest to another agent or a developer.
 
 Professional-dev use case for `--ship`: quick "get me the boring wins out of the way" pass before a code review.
 
@@ -145,11 +153,31 @@ Run all checks against `url` (either the remote URL or the local prod server). E
 
 ### Category 1: Performance
 
-Run Lighthouse and (optionally) PageSpeed Insights:
+Run Lighthouse **3 times** and take the **median** per metric. Single-run perf scores jitter ±5–10 points between runs from network and CPU variance — the median is what makes the 2Prod gates and the Readiness Score reproducible. The median values feed both.
+
+Median, not mean: a single timed-out or crashed run poisons the mean; the median is robust to one bad outlier.
 
 ```bash
-lighthouse "$url" --output=json --output-path=./lh-report.json --only-categories=performance --chrome-flags="--headless --no-sandbox"
+for i in 1 2 3; do
+  lighthouse "$url" --output=json --output-path=./lh-perf-$i.json --only-categories=performance --chrome-flags="--headless --no-sandbox" --quiet
+done
 ```
+
+**Retry policy:** for each of the 3 runs, the result must include all four required values:
+- `categories.performance.score` (a number, not null)
+- `audits["largest-contentful-paint"].numericValue`
+- `audits["cumulative-layout-shift"].numericValue`
+- `audits["total-blocking-time"].numericValue`
+
+If a run produces a non-zero exit code, times out, or yields a JSON missing any of these fields, **retry that single run up to 2 additional times**. If after 3 attempts a run still fails, the entire Performance category in 2Prod is **hard-failed** (P1, P2, P3, P4 all counted as fails in the gate count). Do not silently fall back to fewer runs — that would hide instability and break project-independence.
+
+Then take the **median** of each metric across the 3 successful runs:
+- median `categories.performance.score`
+- median LCP (ms)
+- median CLS
+- median TBT (ms)
+
+Persist the medians to `./lh-perf-median.json` and treat that as the canonical Performance result everywhere downstream. In Phase 3, this median file is moved into `.vibe2prod/artifacts/<run>/` as a durable artifact; the three raw per-run files (`lh-perf-1/2/3.json`) are scratch and are cleaned up after the medians are computed.
 
 If `PAGESPEED_API_KEY` is set and `url` is public (not localhost):
 ```bash
@@ -157,10 +185,12 @@ curl -s "https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=$url&key
 ```
 
 Extract and report:
-- **Scores**: Performance score (0–100)
-- **Core Web Vitals**: LCP (target < 2.5s), INP (target < 200ms), CLS (target < 0.1)
-- **Other metrics**: TTFB, FCP
+- **Scores**: Performance score (0–100, median of 3 runs)
+- **Core Web Vitals**: LCP (target < 2.5s), INP (target < 200ms — PSI/CrUX only, not measurable in lab), CLS (target < 0.1)
+- **Other metrics**: TTFB, FCP, TBT
 - **Issues**: Render-blocking resources, unoptimized images, unused CSS/JS, missing compression
+
+**Cost**: triple-run perf adds ~2–4 minutes to the audit (more if retries trigger). This is intentional — the cost buys reproducibility. Do not skip the multi-run.
 
 ### Category 2: Accessibility
 
@@ -263,7 +293,7 @@ This is where vibe2prod goes beyond a generic audit. AI-assisted builders (Lovab
 
 Extract `textContent` from `page.html` (strip tags), the full HTML, and — for local project mode — also scan the source tree for obvious leftovers.
 
-**9.1 Placeholder content**
+**8.1 Placeholder content**
 
 Flag occurrences (case-insensitive, word-boundary) of:
 - `Lorem ipsum`, `dolor sit amet`, `consectetur adipiscing`
@@ -277,7 +307,7 @@ Flag occurrences (case-insensitive, word-boundary) of:
 
 Severity: **HIGH** if in a headline, hero, or primary CTA. **MEDIUM** elsewhere.
 
-**9.2 Broken anchors & placeholder URLs**
+**8.2 Broken anchors & placeholder URLs**
 
 Parse all `<a href>` values. Flag:
 - `href="#"` with no JavaScript handler attached (dead links)
@@ -289,7 +319,7 @@ Parse all `<a href>` values. Flag:
 
 Severity: **HIGH** for visible dead/placeholder CTAs, **MEDIUM** for footer/secondary links.
 
-**9.3 Placeholder images & fake social proof**
+**8.3 Placeholder images & fake social proof**
 
 Scan `<img>` sources and surrounding markup. Flag:
 - Image URLs from placeholder services: `via.placeholder.com`, `placehold.co`, `placekitten.com`, `picsum.photos`, `baconmockup.com`, `loremflickr.com`
@@ -302,7 +332,7 @@ Scan `<img>` sources and surrounding markup. Flag:
 
 Severity: **HIGH** for visible placeholder images or fake testimonials on landing pages, **MEDIUM** for stock-logo walls without attribution.
 
-**9.4 Hallucinated meta tags & duplicate sections**
+**8.4 Hallucinated meta tags & duplicate sections**
 
 Meta-tag hallucinations:
 - `og:image` URL that returns non-200 when fetched
@@ -318,6 +348,27 @@ Duplicate sections (uses Playwright to read the rendered DOM):
 - Feature grids where all card titles and descriptions are trivially similar (e.g., all start with "Easy to…", same length, same structure)
 
 Severity: **HIGH** for broken meta tags that will publicly mis-render; **MEDIUM** for duplicate sections.
+
+**8.5 Leaked secrets (feeds veto V5)**
+
+AI builders and copy-paste workflows routinely bake live API keys straight into the client bundle. Any such match is a hard ship-stop — it feeds **veto V5**, not a regular gate.
+
+Collection (do this with Playwright so dynamically-injected scripts are covered, not just the static HTML):
+1. Load the page and capture the **rendered HTML** (`document.documentElement.outerHTML`).
+2. Collect **all inline `<script>` contents** from the DOM.
+3. Collect **all external JS** the page actually loaded: capture every `script[src]` URL via `page.on('response')` (type `script`) and read each response body.
+4. Concatenate (1)+(2)+(3) into one text blob and run the regex set below over it.
+
+Regex set (case-sensitive where shown):
+- `sk_live_[A-Za-z0-9]+`, `sk_test_[A-Za-z0-9]+`, `pk_live_[A-Za-z0-9]+` — Stripe
+- `AIza[A-Za-z0-9_-]{35}` — Google API key
+- `ghp_[A-Za-z0-9]{36}` — GitHub personal access token
+- `xox[baprs]-[A-Za-z0-9-]+` — Slack token
+- `eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+` — JWT
+- `-----BEGIN (RSA |EC |OPENSSH |)PRIVATE KEY-----` — private key block
+- `AKIA[0-9A-Z]{16}` — AWS access key ID
+
+**False-positive guard:** `pk_live_` (Stripe *publishable* key) and `AIza…` Google keys are sometimes legitimately client-side. Still report them — but in the finding, note "may be intended as a public/restricted key; confirm it is domain-restricted" rather than asserting compromise. `sk_live`, `ghp_`, AWS, Slack, JWT, and private-key blocks are **never** legitimately client-side → unambiguous V5 fail. When V5 fails, **never print the matched secret value** in the report or `fix-me.md`; show the pattern name, the file/URL it was found in, and a character offset only.
 
 ### Category 9: Responsiveness (multi-breakpoint, quantitative)
 
@@ -359,7 +410,7 @@ Where WCAG rules apply (tap-target size, zoom-lock), prefer the existing axe-cor
 Output a compact matrix — one row per check, one column per breakpoint, each cell is pass/fail or the measured number:
 
 ```
-Responsiveness (Cat 10)
+Responsiveness (Cat 9)
                               xs     sm     md     lg     xl
 Horizontal overflow            ✗      ✓      ✓      ✓      ✓
 Tap-targets <24px              7      3      0      0      0
@@ -387,7 +438,7 @@ For re-test in Phase 5, the same matrix is regenerated and every cell becomes a 
 
 ### Category 10: Stack Freshness (live version check — no training knowledge)
 
-**Critical rule:** Never answer "is this version current?" from training data. LLM training is 3–9 months stale and package release cadence is faster than that. Always fetch live version info from the sources below. If the live lookup fails (no network, registry 5xx), **abort Category 11 with a clear warning** rather than falling back to your memory.
+**Critical rule:** Never answer "is this version current?" from training data. LLM training is 3–9 months stale and package release cadence is faster than that. Always fetch live version info from the sources below. If the live lookup fails (no network, registry 5xx), **abort Category 10 with a clear warning** rather than falling back to your memory.
 
 Runs only in **Local Project Mode** (requires a `package.json`). In remote-URL mode, skip this category and note it in the report.
 
@@ -449,12 +500,12 @@ For **MEDIUM** and **HIGH** findings on meta-frameworks (Next.js, Nuxt, Astro, S
 2. Call `mcp__Context7__get-library-docs` to retrieve the latest docs/migration content.
 3. Include the migration URL in the finding. Do **not** paraphrase the migration guide — just link to it. That keeps the authoritative source the source.
 
-If Context7 is not available or errors, degrade gracefully: still report the version gap, omit the migration link.
+If If no docs MCP is connected, or the call errors, degrade gracefully: still report the version gap, omit the migration link. The version-gap finding never depends on the docs lookup.
 
 #### Report output
 
 ```
-Stack Freshness (Cat 11)
+Stack Freshness (Cat 10)
 
 Package              Installed    Latest      Gap            Severity  Notes
 next                 12.3.4       15.1.2      3 major        HIGH      Migration: <url from Context7>
@@ -475,7 +526,104 @@ Live lookup: npm registry (14 packages checked), nodejs.org/dist (Node LTS sched
 
 ## Phase 3: Generate Report
 
-After all checks complete, aggregate results into a single report. Clean up temporary files (lh-report.json, psi-report.json, page.html, headers.txt, w3c-report.json, etc.) and — in Local Project Mode — shut down the prod server.
+After all checks complete, aggregate results into a single report. First move the durable artifacts (median Lighthouse JSON, axe report, W3C report, responsiveness screenshots) into `.vibe2prod/artifacts/` and write the run journal per the **Persistence & artifacts** section. Then clean up **only the scratch files** (`lh-perf-1/2/3.json`, `psi-report.json`, `page.html`, `headers.txt`, the pre-move `w3c-report.json`, server logs) and — in Local Project Mode — shut down the prod server. **Never delete `.vibe2prod/`.**
+
+### 2Prod (project-independent ship/no-ship verdict)
+
+2Prod directly answers *"can I publish this now?"* with a five-band traffic light. It is the headline — printed first, above the Readiness Score. It is intentionally strict and project-independent: the gate list and thresholds are **hard-coded in this skill** and identical for every site. Two runs of an unchanged site should produce the same 2Prod band — barring a metric sitting exactly on a gate threshold, which median-of-3 reduces but cannot fully eliminate (see the determinism rule below). Never adapt thresholds per project, framework, or user preference.
+
+Computation has two stages: 5 veto gates first, then 27 regular gates. Cat 10 (Stack Freshness) is intentionally **not** in the gate list — it only runs in Local Project Mode and would otherwise make 2Prod incomparable between modes.
+
+**Header-position rule:** every gate that reads an HTTP response header (V2, Sec1–Sec3, R3) reads the **final response after redirect-following**. Intermediate 3xx hops are ignored.
+
+**Static HTML rule:** S6 byte count and H1 W3C validation operate on the **raw HTML response body** of the final response — not the post-hydration DOM. CSR-only sites get reduced coverage on these gates; that's a known limitation, not a configurable setting.
+
+**Local Project Mode gate handling:** three regular gates read hosting-layer response headers that a plain localhost prod server cannot serve — Sec1 (HSTS), Sec2 (`X-Content-Type-Options`), Sec3 (Referrer-Policy). In Local Project Mode these three are marked **DEFERRED** and excluded from **both** numerator and denominator, so the local denominator is **24, not 27**. (V2 HTTPS is already auto-passed on localhost per its own bypass.) This is what makes a 🟢 READY verdict *reachable* locally — otherwise a perfectly-built project would cap at ~89 % purely because security headers belong to a host it hasn't been deployed to yet. The local report labels the verdict **"Local 2Prod (code-only)"** and always lists the deferred gates with the note: *"Verify Sec1–Sec3 + HTTPS against the deployed URL before relying on a READY verdict."* Remote-URL mode evaluates all 27 gates with no deferral — that is the canonical, full 2Prod.
+
+**Inconclusive-measurement rule (tooling failure ≠ site failure):** distinguish two reasons a gate can't pass. (a) The site genuinely lacks the thing → the gate **fails** normally. (b) The *auditing tool or external service* is unreachable (W3C validator down, registry 5xx, Playwright crash) → mark the gate **INCONCLUSIVE**, exclude it from both numerator and denominator for that run, and add an **"audit confidence: reduced"** banner listing which gates were inconclusive. Never silently convert a tooling outage into a site defect — that produces a misleadingly low 2Prod the user can't act on. An inconclusive run is not reproducible by definition; note that in the report.
+
+#### Veto gates (any fail → 🔴 BLOCKED, regardless of regular-gate count)
+
+| ID | Gate | Pass condition |
+|---|---|---|
+| V1 | Site loads and renders | All of: (a) root URL returns HTTP 2xx after redirect-following; (b) `document.body.textContent.length > 50` after `domcontentloaded` (catches blank shells); (c) zero `pageerror` events fired during the Playwright load (catches hydration crashes). |
+| V2 | HTTPS + no mixed content | All of: (a) URL is https:// (or http:// 301/308 redirects to https://); (b) Playwright `page.on('request')` captures 0 requests with scheme `http:` (excluding `data:`, `blob:`, `localhost`/RFC1918 private). Measured from network events, not HTML string scan, so it catches CSS `url()`, `fetch`/XHR, JS-injected assets, WebSockets. **Localhost bypass:** when host is `localhost`, `127.0.0.1`, or RFC1918 private range, V2 auto-passes (Local Project Mode test environment — security headers and HTTPS belong to the hosting layer). |
+| V3 | `<title>` present | `<title>` element exists with non-empty trimmed text content. |
+| V4 | Viewport meta valid | `<meta name="viewport">` exists; content does **not** contain `user-scalable=no` and does **not** contain `maximum-scale` set to a value ≤ 1. |
+| V5 | No leaked secrets | Cat 8.5 secret scan (rendered HTML + all loaded inline/external JS) returns 0 matches for the live-credential patterns. A site shipping a real API key or token is catastrophically not-shippable — this is a hard stop, not a 1-of-27 deduction. **Localhost note:** V5 runs identically in local and remote mode; secrets in the bundle are a code defect, not a hosting concern, so there is no bypass. |
+
+If any veto fails, 2Prod = 🔴 BLOCKED. Display the failed veto ID(s) inline. Do not compute or display a percentage — the site is out of competition.
+
+#### Regular gates (each binary, equal weight)
+
+27 gates. One gate = `1/27 = 3.704 %`. (In Local Project Mode, Sec1–Sec3 are deferred → 24 gates, one gate = `1/24 = 4.167 %`.)
+
+| ID | Gate | Pass condition |
+|---|---|---|
+| **Performance — 3-run, median** |
+| P1 | Performance score | median of 3 Lighthouse `categories.performance.score` ≥ 0.80 |
+| P2 | LCP not Poor | median LCP ≤ 4000 ms |
+| P3 | CLS not Poor | median CLS ≤ 0.25 |
+| P4 | TBT acceptable | median TBT ≤ 600 ms |
+| **Accessibility** |
+| A1 | No critical a11y violations | axe-core: count of violations with `impact == "critical"` is 0 |
+| A2 | No serious a11y violations | axe-core: count of violations with `impact == "serious"` is 0 |
+| A3 | `<html lang>` set | `<html>` element has non-empty `lang` attribute |
+| **SEO** |
+| S1 | Title length | `<title>` trimmed text length is 30–60 characters inclusive |
+| S2 | Meta description length | `meta[name=description]` content length is 50–160 characters inclusive |
+| S3 | OG tags complete | `og:title`, `og:description`, `og:image` are all present with non-empty content |
+| S4 | Canonical link | `<link rel="canonical">` element exists with non-empty `href` |
+| S5 | Sitemap + robots | `<url>/sitemap.xml` AND `<url>/robots.txt` both return HTTP 200 after redirect-following |
+| S6 | HTML within Google indexing limit | raw HTML response body byte count ≤ 2,097,152 bytes (2 MB). Googlebot stops processing at 2 MB; content past this is not indexed. |
+| **HTML quality** |
+| H1 | HTML valid (raw response) | W3C Nu Validator on the raw HTML response body returns 0 messages with `type == "error"` |
+| **Security** |
+| Sec1 | HSTS | `strict-transport-security` header on the final response is present |
+| Sec2 | MIME sniffing protection | `x-content-type-options` header on the final response is exactly `nosniff` (case-insensitive) |
+| Sec3 | Referrer-Policy | `referrer-policy` header on the final response is present (any value) |
+| **Robustness** |
+| R1 | No console errors | Playwright `page.on('console')` captures 0 events with `type === 'error'` during page load |
+| R2 | 404 returns 404 | `GET <url>/this-page-does-not-exist-404-test` returns HTTP status 404 |
+| R3 | Compression active | `content-encoding` header on the final HTML response is `br` or `gzip` |
+| R4 | No broken sub-resources | Playwright `page.on('response')` captures 0 sub-resource responses (images, scripts, stylesheets, fonts, XHR/fetch) with status ≥ 400. Catches 404s on resources that don't throw `console.error`. |
+| **Assets** |
+| As1 | Favicon | `link[rel=icon]` is present in HTML, OR `<url>/favicon.ico` returns HTTP 200 |
+| **Responsiveness** (from Cat 9 Playwright multi-breakpoint) |
+| Resp1 | No horizontal overflow | `documentElement.scrollWidth > clientWidth` is false at all five breakpoints (xs, sm, md, lg, xl) |
+| Resp2 | Tap-targets ≥ 24×24 px on mobile | at xs (320 px) AND sm (375 px) breakpoints, the count of `button, a, input, select, [role=button]` with bounding-box width < 24 OR height < 24 is 0 |
+| **AI-slop** |
+| AI1 | No placeholder text | Cat 8.1 placeholder-content scan returns 0 matches in rendered text |
+| AI2 | No placeholder URLs | Cat 8.2 placeholder-URL scan returns 0 matches in `href`/`src` values |
+| AI3 | No placeholder images | Cat 8.3 placeholder-image scan returns 0 matches |
+
+(Leaked-secret detection is **veto V5**, not a regular gate — see the veto table above. The scan procedure is Cat 8.5.)
+
+#### Computation steps
+
+1. Evaluate the five vetos. If any fail → `2Prod = { band: "BLOCKED", color: "🔴", failed_vetos: [...] }`. Stop, no percentage.
+2. All vetos pass → evaluate the regular gates. Each gate is strictly binary per the table. `denominator = 27` in remote mode, `24` in Local Project Mode (Sec1–Sec3 deferred). Subtract any **INCONCLUSIVE** gates (tooling outage) from both `passed_count` and `denominator`.
+3. Compute `pct = passed_count / denominator × 100`, rounded to one decimal.
+4. Map `pct` to a band:
+
+| Range | Band | Color |
+|---|---|---|
+| `pct ≥ 95.0` | READY | 🟢 |
+| `85.0 ≤ pct < 95.0` | Light Green ("almost ready") | 🟢 |
+| `70.0 ≤ pct < 85.0` | NOT YET ("OK, but not professional") | 🟡 |
+| `50.0 ≤ pct < 70.0` | NEEDS WORK | 🟠 |
+| `pct < 50.0` | BLOCKED | 🔴 |
+
+5. **READY-band guard.** The two 🟢 bands (READY, Light Green) additionally require **Resp1 (no horizontal overflow) to pass**. A site that scrolls sideways on a phone is not something you call "ready to ship", no matter how high the percentage. If Resp1 failed, cap the band at 🟡 NOT YET regardless of `pct`, and note `(capped at NOT YET: Resp1 horizontal overflow)` in the headline. No other gate has this guard — Resp1 is singled out because it's both common in AI-generated layouts and immediately visible to every mobile visitor.
+6. Record the list of **failed gate IDs** (and any DEFERRED / INCONCLUSIVE IDs separately). They are surfaced in the report headline so the user instantly sees which gates need to flip.
+
+#### Stability rules
+
+- All thresholds above are **constants**. Do not adjust them based on project type, framework, hosting provider, or user request.
+- The set of 5 vetos + 27 regular gates is fixed. Adding or removing gates is a versioned skill change, not a per-audit decision.
+- **Distinguish a site defect from a tooling outage.** If the *site* genuinely lacks something the gate checks → record the gate as **failed**. If the *measurement itself* could not be taken because a tool or external service was unreachable → record it **INCONCLUSIVE** and drop it from numerator and denominator (per the Inconclusive-measurement rule above). The old "always fail, never skip" stance is wrong: it turns a W3C-validator outage into a phantom HTML defect the user can't fix. Project-independence still holds for *defects* — a site with the same defects scores the same; tooling outages are explicitly flagged as reduced-confidence rather than silently folded into the score.
+- **Determinism is best-effort, not absolute.** Median-of-3 removes most Lighthouse jitter, but a metric sitting right on a threshold (e.g. perf score hovering at 0.80, LCP at ~4000 ms) can still flip a gate run-to-run. 2Prod is **reproducible** (same site → same result in the overwhelming majority of runs), not mathematically **identical** every time. Do not promise bit-identical scores.
+- vibe2prod evaluates the **root URL only**. Multi-route, deep-link, and authenticated-area audits are deliberately out of scope for 2Prod.
 
 ### Readiness Score (0–100)
 
@@ -496,19 +644,24 @@ Every audit computes a single 0–100 Readiness Score. This is the headline numb
 | 4 | HTML Quality | 3 |
 | 10 | Stack Freshness | 2 |
 
-**Computation:**
+**Computation:** every category is scored by **exactly one** of two methods — never both. This is the rule that removes the old double-counting ambiguity.
 
-1. Each category starts at its full weight (its "cap").
-2. Every check inside a category has an equal share of that cap (e.g., if Performance has 5 checks, each check is worth 17 / 5 ≈ 3.4 points).
-3. Each finding deducts points from its category based on severity:
-   - **CRITICAL**: full check value deducted
-   - **HIGH**: full check value deducted
-   - **MEDIUM**: 0.5 × check value deducted
-   - **LOW**: 0.25 × check value deducted
+**Method A — Lighthouse-direct (Performance, Accessibility, SEO only).** These three categories *are* the Lighthouse category, so use the Lighthouse 0–100 score mapped linearly onto the weight, full stop. No per-check deductions are layered on top.
+- Performance = `(median Lighthouse perf score) × 17`
+- Accessibility = `(Lighthouse a11y score) × 17` (e.g. a11y 0.80 → 13.6 pts)
+- SEO & Meta = `(Lighthouse SEO score) × 12`
+- Findings from these categories are still *listed* in the report (with their fix and a point estimate), but the category total comes solely from the Lighthouse score — the listed findings explain *why* Lighthouse marked it down, they are not re-deducted.
+- Cat 9 tap-target / zoom findings live in Responsiveness (Method B), **not** Accessibility, so they never double-count against this a11y score.
+
+**Method B — per-check deduction (all other categories: Responsiveness, Security, AI-Slop, Robustness, Assets, HTML Quality, Stack Freshness).**
+1. The category starts at its full weight (its "cap").
+2. Every check inside the category has an equal share of that cap (e.g. if Security has 6 checks, each is worth 12 / 6 = 2 points).
+3. Each finding deducts from its category by severity: **CRITICAL** / **HIGH** = full check value, **MEDIUM** = 0.5 ×, **LOW** = 0.25 ×.
 4. A category can never go below 0.
+
+**Then, for both methods:**
 5. Sum all category scores → 0–100.
 6. Cat 10 (Stack Freshness) is skipped in remote-URL mode. When skipped, redistribute its 2 points across the other 9 categories proportionally so the total stays 100.
-7. If Lighthouse returns a category score directly (Performance, Accessibility, SEO), map that 0–100 Lighthouse score linearly onto the category weight (e.g., Lighthouse a11y 80 → 0.8 × 17 = 13.6 pts), then apply any additional vibe2prod-specific deductions on top (tap-target failures from Cat 9 do NOT double-count against Cat 2).
 
 **Score bands (report these in plain language):**
 
@@ -569,11 +722,19 @@ Assign severity to each issue:
 
 ### Report Format
 
-The report has four top-level sections in this order. Numbering of individual findings is **global** (1..N across the whole report) so the user can say "Fix 3, 7, 12" unambiguously. Each finding uses the four-line format from **Report Rendering**.
+The report has five top-level sections in this order. **2Prod is the headline** — printed first, before the Readiness Score. Numbering of individual findings is **global** (1..N across the whole report) so the user can say "Fix 3, 7, 12" unambiguously. Each finding uses the four-line format from **Report Rendering**.
 
 ```
 ## vibe2prod audit: <url>
 Mode: <remote | local-project> | Date: <today's date>
+
+### 2Prod: <color emoji> <band label> — <pct>% (<passed>/<denominator> gates passed)
+# denominator = 27 (remote) or 24 (local-project, Sec1–Sec3 deferred), minus any inconclusive gates
+Failed gates: <comma-separated list of failed gate IDs>
+
+# If any veto failed, replace the line above with:
+### 2Prod: 🔴 BLOCKED — veto failed: <V-id> (<short veto description>)
+# Do not show a percentage when blocked by veto.
 
 ### Readiness Score: <0–100> <band emoji> "<band label>"
 <one-sentence TL;DR — what the score is being pulled down by, in plain language>
@@ -695,6 +856,7 @@ Write the file to `./fix-me.md` in the audited project (Local Project Mode) or t
 
 Audited by vibe2prod on <YYYY-MM-DD>.
 Target: <url or "local project at <path>">
+2Prod: <color emoji> <band label> — <pct>% (<passed>/<denominator> gates) · Failed gates: <list> · Deferred (local): <list> · Inconclusive: <list>
 Readiness Score: <n>/100 (<band label>)
 
 ## Project context
@@ -706,7 +868,7 @@ Readiness Score: <n>/100 (<band label>)
 
 ## How to use this brief
 
-You are the coding agent that will complete the remaining fixes. Work through the items **in the listed order** — they are ordered by impact-per-effort (biggest Readiness-Score gain first, with dependencies resolved before dependents). For each item:
+You are the coding agent that will complete the remaining fixes. Work through the items **in the listed order** — they are sorted with **2Prod-blocking gates first** (anything that flips a failing 2Prod gate to pass), then by impact-per-effort on the Readiness Score, with dependencies resolved before dependents. For each item:
 
 1. Read the "Where" and "What" fields.
 2. Apply the "Proposed change" — it's a literal diff where possible.
@@ -754,7 +916,9 @@ After applying all fixes, the user can re-run:
 /vibe2prod <same url or from project root>
 ```
 
-Expected score after these fixes: <n>/100 (if all items are applied correctly).
+Expected after these fixes (if all items are applied correctly):
+- 2Prod: <predicted band emoji> <predicted band> — <predicted pct>%
+- Readiness Score: <n>/100
 ```
 
 ### Rules for generating fix-me.md
@@ -764,6 +928,8 @@ Expected score after these fixes: <n>/100 (if all items are applied correctly).
 - **Include file paths as absolute-from-project-root.** Agents paste this brief into projects that may not share your working directory — `src/app/layout.tsx` is portable, `/Users/.../app/layout.tsx` is not.
 - **Never paraphrase external docs.** For migration guides, link the URL retrieved via Context7 in Phase 2. The receiving agent can follow the link.
 - **The "Expected score after" is a prediction based on the point values in the report.** Sum the `Fix → +N.N pts` values of every included item and add them to the current score. Cap at 100.
+- **The "Expected 2Prod after" is computed from the gate flips.** For each item in the brief, identify which (if any) 2Prod gate it flips from fail to pass. Recompute `pct = (current_passed + flipped_gates) / denominator × 100` (denominator = 27 remote / 24 local) and map to a band. If a veto gate is among the flips, the predicted 2Prod jumps from 🔴 BLOCKED to whatever the regular-gate count maps to. Remember the READY-band guard: if Resp1 is still failing, the prediction cannot exceed 🟡 NOT YET.
+- **Sort items: 2Prod-flipping items first**, then by points-per-effort. Within the 2Prod group, vetos before regular gates.
 - **Do not include items the user already chose to skip** (e.g., if they said "Fix 1-3, skip the rest", the skipped ones do not go into `fix-me.md`). The brief is for handing off the remaining *committed* work, not the entire backlog.
 
 ## Phase 5: Re-Test & Compare
@@ -777,6 +943,8 @@ When the user asks to re-test (e.g., "test again", "re-run", "check again"):
 ```
 ### Comparison: Before → After
 
+2Prod:           🟡 NOT YET (78.6%) → 🟢 READY (96.4%)  (+17.8 pp, NOT YET → READY)
+                 Newly passing: H1, A2, Sec2, Sec3, Resp2
 Readiness Score: 62 → 87 (+25)
 
 Performance:    82 → 94 (+12)

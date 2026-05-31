@@ -2,7 +2,9 @@
 
 > **AI-generated sites aren't "slop" — they're drafts.** vibe2prod's job is to close the gap between draft and prod, not to shame the author. Every check has a concrete, actionable fix attached, and every fix that touches user-visible copy is proposed (not silently applied).
 
-**vibe2prod** is a Claude Code plugin that audits websites across **10 technical categories** — performance, accessibility, SEO, HTML quality, security, assets, robustness, AI-slop artifacts, responsiveness (quantitative multi-breakpoint tests), and stack freshness (live npm-registry version checks, never training knowledge) — computes a **0–100 Readiness Score**, helps you fix what it finds, and re-tests with a before/after comparison.
+**vibe2prod** is a Claude Code plugin that audits websites across **10 technical categories** — performance, accessibility, SEO, HTML quality, security, assets, robustness, AI-slop artifacts, responsiveness (quantitative multi-breakpoint tests), and stack freshness (live npm-registry version checks, never training knowledge) — produces a project-independent **2Prod ship verdict** (READY → BLOCKED) and a **0–100 Readiness Score**, helps you fix what it finds, and re-tests with a before/after comparison.
+
+**Two headline numbers, two questions.** *Can I publish this now?* → 2Prod. *How good is it overall?* → Readiness Score. 2Prod is strict, project-independent, and reproducible across runs (5 vetos + 27 hard binary gates, all hard-coded). Readiness Score is nuanced and weighted. Both ship in every report.
 
 It's built for the vibe-coder era: if you shipped with Lovable, v0, Bolt, Cursor, Claude Code, or any other AI-assisted builder, vibe2prod catches the stuff those tools don't — leftover Lorem ipsum, placeholder images, `example.com` links, fake "John Doe" testimonials, hallucinated OG tags, duplicate hero sections, missing security headers, outdated framework versions, horizontal overflow on small phones, and so on.
 
@@ -21,9 +23,11 @@ vibe2prod does **not** make legal claims. It does not check "is your Impressum p
 
 ## Features
 
+- **2Prod verdict** — a project-independent ship/no-ship traffic light (🟢 READY · 🟢 Light Green · 🟡 NOT YET · 🟠 NEEDS WORK · 🔴 BLOCKED) computed from 5 hard vetos (HTTPS, site loads, title, viewport, no leaked secrets) plus 27 hard binary gates with fixed thresholds. Reproducible across runs (identical inputs give the same band barring metrics sitting exactly on a threshold). Includes the Googlebot 2 MB indexing-limit gate and a READY-band guard for mobile horizontal overflow.
 - **Dual mode** — audit a live URL or your local project. In local mode, vibe2prod builds your project in prod mode, starts the prod server locally (never the dev server, because dev bundles produce misleading Lighthouse scores), audits, and cleans up.
 - **Framework-aware local builds** — Vite, Next.js, Astro, SvelteKit, Nuxt, Remix, and plain static HTML all handled out of the box.
-- **Readiness Score (0–100)** — a single headline number, weighted across the 10 categories. Each finding shows how many points fixing it is worth.
+- **Readiness Score (0–100)** — a nuanced second headline, weighted across the 10 categories. Each finding shows how many points fixing it is worth.
+- **Reproducible Performance** — Lighthouse runs 3× per audit, median feeds both 2Prod gates and the Readiness Score. No more ±5-point jitter between runs.
 - **Dual-audience report** — every finding is rendered in four lines: traffic-light headline, plain-language impact, technical detail with metric + reference URL, and a concrete fix. Vibe-coders can stop reading after line 2; pros skip straight to lines 3–4.
 - **Impact grouping** — issues are organized by what users actually notice: Speed, Responsiveness, Findability, Security & Trust, Polish. The technical category label stays on every finding for pros.
 - **Quantitative responsiveness** — 5-breakpoint Playwright measurements (320 / 375 / 768 / 1024 / 1280 px) produce a diff-able matrix, not a vibe.
@@ -102,7 +106,11 @@ Combinations are valid: `/vibe2prod --ship --export`, `/vibe2prod --pro`, `/vibe
 
 ```
 ## vibe2prod audit: https://example.com
-Mode: remote | Date: 2026-04-21
+Mode: remote | Date: 2026-04-25
+
+### 2Prod: 🟡 NOT YET — 74.1% (20/27 gates passed)
+Failed gates: P2 (LCP), Resp1 (xs overflow), AI1 (Lorem ipsum), H1 (HTML errors), Sec2, Sec3 (security headers), R4 (broken sub-resources)
+(Capped at NOT YET regardless of %: Resp1 horizontal overflow.)
 
 ### Readiness Score: 62/100 🟠 "Functional, but not production-grade yet"
 Pulled down by slow hero loading, a broken mobile header, and leftover placeholder copy in the pricing section.
