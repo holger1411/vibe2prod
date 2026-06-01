@@ -23,6 +23,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# Claude Code local session state
+.claude/
+
 # Env
 .env
 .env.local

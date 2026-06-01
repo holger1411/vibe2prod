@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "vibe2prod",
-      "description": "Production-readiness auditor for AI-generated websites. 10 technical categories, project-independent 2Prod ship verdict (4 vetos + 28 hard gates), 0-100 Readiness Score, dual-audience layered report (vibe-coders + pros), interactive or autopilot fixing, fix-me.md handoff for other coding agents.",
+      "description": "Production-readiness auditor for AI-generated websites. 10 technical categories, project-independent 2Prod ship verdict (5 vetos + 27 hard gates), 0-100 Readiness Score, dual-audience layered report (vibe-coders + pros), interactive or autopilot fixing, fix-me.md handoff for other coding agents.",
       "version": "0.4.0",
       "source": "./",
       "author": {
