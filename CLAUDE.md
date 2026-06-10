@@ -25,3 +25,4 @@ This repo is a Claude Code plugin. Its only moving part is the `vibe2prod` skill
 2. Bump version in `plugin.json`, `marketplace.json`, `package.json`.
 3. Commit with imperative English message (e.g., "Add X check to Category 9").
 4. Tag `vX.Y.Z`, push tags.
+5. Update the locally installed plugin: `claude plugin update vibe2prod@vibe2prod`. Claude Code pins the installed version in its cache — the marketplace pointing at `./` does **not** auto-pick-up new releases. Takes effect on the next Claude Code start.
