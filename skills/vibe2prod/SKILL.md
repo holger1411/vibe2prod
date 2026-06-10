@@ -63,7 +63,7 @@ For users who just want their site fixed without the picker. The rule: *auto-fix
    - Do not touch user-visible copy (no headline rewrites, no testimonial changes, no placeholder copy replacement)
    - Do not require hosting-layer config (no server-header changes)
    - Do not require major-version migrations
-   - Concretely: meta tags, alt attributes on decorative/inferable images, `width`/`height` on `<img>`, `loading="lazy"`/`fetchpriority`, `font-display: swap`, sitemap.xml, robots.txt, web manifest, viewport meta, `noscript` fallback, self-hosting Google Fonts, `href="#"` → `href="#top"` on dead anchors, removing clearly-duplicate hero sections where one is text-only empty, `<meta name="theme-color">` (color inferred from the page background), `color-scheme` on `<html>` when a dark theme is detected, replacing `transition: all` with the explicit property list when the animated properties are statically inferable from the hover/focus rules (otherwise leave it in the report)
+   - Concretely: meta tags, alt attributes on decorative/inferable images, `width`/`height` on `<img>`, `loading="lazy"`/`fetchpriority`, `font-display: swap`, sitemap.xml, robots.txt, web manifest, viewport meta, `noscript` fallback, self-hosting Google Fonts, `href="#"` → `href="#top"` on dead anchors, removing clearly-duplicate hero sections where one is text-only empty, `<meta name="theme-color">` (color inferred from the page background), `color-scheme` on `<html>` when a dark theme is detected, replacing `transition: all` with the explicit property list when the animated properties are statically inferable from the hover/focus rules (otherwise leave it in the report), adding missing font weights/styles to the font loading where the browser currently synthesizes fake bold/italic, adding `hyphens: auto` to justified body text
 4. **Order of application**: fixes that flip a failing 2Prod gate into pass go first. Only after no more 2Prod gates can be flipped, apply the remaining auto-fixes (which still help the Readiness Score).
 5. Re-test automatically (Phase 5).
 6. Emit the residual report: what's left, why it wasn't auto-fixed, and how to fix it manually.
@@ -274,6 +274,8 @@ Analyze assets from `page.html` and the page load:
 - **Apple Touch Icons**: Check for `<link rel="apple-touch-icon">`.
 - **Web App Manifest**: Check for `<link rel="manifest">` and fetch the manifest file.
 - **Theme color**: Check for `<meta name="theme-color">`. Missing → **LOW** (browser UI won't match the page background on mobile).
+- **Fake bold / fake italic**: With Playwright, enumerate the actually-loaded font faces (`document.fonts`: family, weight, style) and diff them against the `font-weight`/`font-style` values that computed styles request on text nodes. A requested weight/style with no matching loaded face means the browser synthesizes it (faux bold/italic) — classic when a Google Font is loaded only at 400 but the CSS uses 600/700. Severity **MEDIUM**. Auto-fix: add the missing weights/styles to the font loading (Google Fonts URL or `@font-face`) — strictly better than synthesis.
+- **Font-family sprawl**: Count distinct rendered text font families across all text nodes (monospace for code blocks excluded). More than 2 → **LOW**; more than 3 → **MEDIUM**. Each extra family costs font downloads, and uncoordinated families usually signal stitched-together AI output rather than a type system.
 
 ### Category 7: Robustness
 
@@ -296,7 +298,12 @@ Use Playwright for runtime checks and curl for headers:
 - **`transition: all`**: Scan stylesheets for `transition: all` / `transition-property: all` and the DOM for Tailwind's `transition-all` class. Animating `all` includes layout-affecting properties and causes jank; AI builders emit it reflexively. Severity **LOW**.
 - **`color-scheme`**: If the site styles a dark theme (a `prefers-color-scheme: dark` media query exists, or the page defaults to a dark background), check that `color-scheme` is set on `<html>` (CSS property or `<meta name="color-scheme">`) so scrollbars and native form controls render in matching colors. Severity **LOW**.
 
-Interaction-hygiene findings are scored here in Cat 7 (Method B), never in Cat 2 — same double-count rule as the Cat 9 tap-targets: Cat 2's score is Lighthouse-direct, and these checks measure what Lighthouse doesn't.
+**Readability hygiene** (same measurement discipline; viewport-independent, so it lives here and not in the Cat 9 breakpoint matrix):
+
+- **Centered long-form text**: Flag multi-line body paragraphs (> ~40 words) with computed `text-align: center`. Centering long text makes every line start at a different x-position and is measurably harder to read — and it's a characteristic AI-layout default. Severity **LOW** (**MEDIUM** when it affects the majority of body paragraphs).
+- **Justified text without hyphenation**: Flag `text-align: justify` on body text without `hyphens: auto` (or soft hyphens) — produces rivers of white space, especially on narrow viewports. Severity **LOW**. Auto-fix: add `hyphens: auto` (requires a correct `lang` attribute — see gate A3).
+
+Interaction-hygiene and readability findings are scored here in Cat 7 (Method B), never in Cat 2 — same double-count rule as the Cat 9 tap-targets: Cat 2's score is Lighthouse-direct, and these checks measure what Lighthouse doesn't.
 
 ### Category 8: AI-Slop Detection (vibe2prod-specific)
 
@@ -382,6 +389,21 @@ Regex set (case-sensitive where shown):
 - `AKIA[0-9A-Z]{16}` — AWS access key ID
 
 **False-positive guard:** `pk_live_` (Stripe *publishable* key) and `AIza…` Google keys are sometimes legitimately client-side. Still report them — but in the finding, note "may be intended as a public/restricted key; confirm it is domain-restricted" rather than asserting compromise. `sk_live`, `ghp_`, AWS, Slack, JWT, and private-key blocks are **never** legitimately client-side → unambiguous V5 fail. When V5 fails, **never print the matched secret value** in the report or `fix-me.md`; show the pattern name, the file/URL it was found in, and a character offset only.
+
+**Design-tell signals (informational only — never scored, never gated)**
+
+vibe2prod's slop definition is *unfinished artifacts* (8.1–8.5). There is a second, softer axis: *visual genericness* — default styling patterns that many AI builders converge on. These are **not defects**: Inter is a production-ready font, purple gradients and card grids are valid design choices, and the site is never penalized for them. They are worth a heads-up only because visitors increasingly recognize the combination as "AI-made", which can undercut a site whose goal is to look distinct.
+
+Detect (all trivially measurable, collected during the Cat 8/9 Playwright runs — no extra page loads):
+
+1. Primary body font is Inter, Roboto, Open Sans, or an unstyled system-ui default
+2. Dark background with cyan/teal or neon accent palette
+3. Purple-to-blue gradients (backgrounds, buttons, or gradient text on headings)
+4. Three or more visually identical cards in a grid (icon + heading + short text)
+5. Predominantly centered text (the majority of headings *and* body blocks)
+6. Decorative glassmorphism (`backdrop-filter: blur` plus translucent backgrounds)
+
+Rendering rule: only when **2 or more** signals are detected, append the short informational note defined in **Report Format** at the end of the report. Phrase it neutrally — "commonly recognized as AI-default styling; functionally fine" — never as an issue, never with a severity, never with a point value, and never as an item in `fix-me.md`. If the user asks for help differentiating the design, treat it as a normal user-visible design change: propose alternatives, show a diff, wait for approval.
 
 ### Category 9: Responsiveness (multi-breakpoint, quantitative)
 
@@ -735,8 +757,10 @@ Horizontal overflow at xs breakpoint: documentElement.scrollWidth = 360 px, clie
 Assign severity to each issue:
 - **CRITICAL**: Blocks production. Broken functionality, major accessibility violations (no keyboard nav, missing alt on critical images), security vulnerabilities (no HTTPS, mixed content), critical performance (LCP > 4s), visible AI-slop in primary CTAs.
 - **HIGH**: Significant impact. Poor Core Web Vitals, missing OG/meta tags, missing security headers, visible Lorem ipsum, hallucinated meta tags, horizontal overflow on common mobile breakpoints, installed framework two+ majors behind current, focus rings stripped without `:focus-visible` replacement, fake JS navigation on primary nav/CTAs.
-- **MEDIUM**: Should fix. Minor a11y issues, missing JSON-LD, no compression, suboptimal image formats, duplicate sections, stock-logo walls without attribution, form inputs without `autocomplete`/correct `type`, paste blocking.
-- **LOW**: Nice to have. No print stylesheet, missing noscript, no dark mode support, minor HTML warnings, `transition: all`, missing `theme-color`/`color-scheme`.
+- **MEDIUM**: Should fix. Minor a11y issues, missing JSON-LD, no compression, suboptimal image formats, duplicate sections, stock-logo walls without attribution, form inputs without `autocomplete`/correct `type`, paste blocking, fake bold/italic (browser-synthesized font faces).
+- **LOW**: Nice to have. No print stylesheet, missing noscript, no dark mode support, minor HTML warnings, `transition: all`, missing `theme-color`/`color-scheme`, font-family sprawl, centered long-form text, justified text without hyphenation.
+
+Design-tell signals (Cat 8) carry **no severity at all** — they are informational and never enter the issue list, the Readiness Score, or 2Prod.
 
 ### Report Format
 
@@ -781,6 +805,12 @@ Performance <n>/17 | Accessibility <n>/17 | Responsiveness <n>/17 | Security <n>
 
 #### Polish
 ...
+
+### Design-tell note
+# Only rendered when ≥ 2 design-tell signals were detected (see Cat 8). Informational — no severity, no points, no fix item.
+ℹ️ <n> of 6 common AI-default styling patterns detected: <comma-separated list>.
+None of these is wrong — the site is not penalized for them. They only matter if standing out
+visually is a goal for this site. Ask me to propose alternatives if you'd like to differentiate.
 
 ### Technical Appendix
 
@@ -834,6 +864,9 @@ For each issue to fix:
 - Add `autocomplete`, correct `type`, and `inputmode` to form inputs (show the diff — low-risk, but it changes browser behavior)
 - Restore focus rings: add a `:focus-visible` rule where `outline: none` stripped it (propose the CSS and wait for approval — it touches the design layer)
 - Convert fake JS navigation (`<div onClick>`-style) to real `<a href>` links (propose the diff and wait for approval — touches markup and JS behavior)
+- Add missing font weights/styles to the font loading (Google Fonts URL or `@font-face`) where the browser synthesizes fake bold/italic
+- Add `hyphens: auto` to justified body text (requires correct `lang`)
+- Left-align centered long-form paragraphs (propose the diff and wait for approval — visible layout change)
 - **AI-slop fixes**: replace Lorem ipsum / placeholder headings with sensible drafts (and always ask the user to review), swap `example.com`/`yoursite.com` placeholders to real URLs (asking the user first), remove duplicate sections, fix hallucinated `og:url`, clear fake testimonial blocks.
 
 **2. Manual fix** (cannot be auto-fixed, provide instructions):
