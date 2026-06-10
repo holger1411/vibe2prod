@@ -63,7 +63,7 @@ For users who just want their site fixed without the picker. The rule: *auto-fix
    - Do not touch user-visible copy (no headline rewrites, no testimonial changes, no placeholder copy replacement)
    - Do not require hosting-layer config (no server-header changes)
    - Do not require major-version migrations
-   - Concretely: meta tags, alt attributes on decorative/inferable images, `width`/`height` on `<img>`, `loading="lazy"`/`fetchpriority`, `font-display: swap`, sitemap.xml, robots.txt, web manifest, viewport meta, `noscript` fallback, self-hosting Google Fonts, `href="#"` → `href="#top"` on dead anchors, removing clearly-duplicate hero sections where one is text-only empty
+   - Concretely: meta tags, alt attributes on decorative/inferable images, `width`/`height` on `<img>`, `loading="lazy"`/`fetchpriority`, `font-display: swap`, sitemap.xml, robots.txt, web manifest, viewport meta, `noscript` fallback, self-hosting Google Fonts, `href="#"` → `href="#top"` on dead anchors, removing clearly-duplicate hero sections where one is text-only empty, `<meta name="theme-color">` (color inferred from the page background), `color-scheme` on `<html>` when a dark theme is detected, replacing `transition: all` with the explicit property list when the animated properties are statically inferable from the hover/focus rules (otherwise leave it in the report)
 4. **Order of application**: fixes that flip a failing 2Prod gate into pass go first. Only after no more 2Prod gates can be flipped, apply the remaining auto-fixes (which still help the Readiness Score).
 5. Re-test automatically (Phase 5).
 6. Emit the residual report: what's left, why it wasn't auto-fixed, and how to fix it manually.
@@ -273,6 +273,7 @@ Analyze assets from `page.html` and the page load:
 - **Favicon**: Check for `<link rel="icon">` or `/favicon.ico`.
 - **Apple Touch Icons**: Check for `<link rel="apple-touch-icon">`.
 - **Web App Manifest**: Check for `<link rel="manifest">` and fetch the manifest file.
+- **Theme color**: Check for `<meta name="theme-color">`. Missing → **LOW** (browser UI won't match the page background on mobile).
 
 ### Category 7: Robustness
 
@@ -286,6 +287,16 @@ Use Playwright for runtime checks and curl for headers:
 - **Viewport meta**: Check for `<meta name="viewport">` with reasonable content.
 - **404 page**: Fetch `<url>/this-page-does-not-exist-404-test` and check if it returns a custom 404 (not the default server error).
 - **noscript fallback**: Check for `<noscript>` tag presence.
+
+**Interaction hygiene** (derived from Vercel's web-interface-guidelines; every check is a measurement — DOM/CSS scan via Playwright on the rendered page, plus a source grep in Local Project Mode):
+
+- **Focus visibility**: Scan all stylesheets — and `class` attributes for Tailwind's `outline-none` / `focus:outline-none` — for `outline: none` / `outline: 0` on `:focus`, `*`, or interactive selectors **without** a `:focus-visible` (or equivalent) replacement rule. Keyboard users lose the focus ring entirely. Severity **HIGH** (WCAG 2.4.7). Neither axe-core nor Lighthouse reliably flags this — do not skip it as already covered.
+- **Form autocomplete & input types**: For each `<input>`: flag missing `autocomplete` where `name`/`label`/`placeholder` clearly indicates email, name, tel, or address; flag `type="text"` where the field is clearly email/tel/url/number; flag missing `inputmode` on numeric-entry fields. Severity **MEDIUM** (WCAG 1.3.5 — axe validates `autocomplete` *values* but not their *presence*).
+- **Paste blocking**: Only when the page has text inputs — use Playwright to paste a probe string into each and verify the value arrives; in Local Project Mode also grep the source for paste handlers calling `preventDefault`. Blocking paste breaks password managers and 2FA codes. Severity **MEDIUM**.
+- **`transition: all`**: Scan stylesheets for `transition: all` / `transition-property: all` and the DOM for Tailwind's `transition-all` class. Animating `all` includes layout-affecting properties and causes jank; AI builders emit it reflexively. Severity **LOW**.
+- **`color-scheme`**: If the site styles a dark theme (a `prefers-color-scheme: dark` media query exists, or the page defaults to a dark background), check that `color-scheme` is set on `<html>` (CSS property or `<meta name="color-scheme">`) so scrollbars and native form controls render in matching colors. Severity **LOW**.
+
+Interaction-hygiene findings are scored here in Cat 7 (Method B), never in Cat 2 — same double-count rule as the Cat 9 tap-targets: Cat 2's score is Lighthouse-direct, and these checks measure what Lighthouse doesn't.
 
 ### Category 8: AI-Slop Detection (vibe2prod-specific)
 
@@ -307,7 +318,7 @@ Flag occurrences (case-insensitive, word-boundary) of:
 
 Severity: **HIGH** if in a headline, hero, or primary CTA. **MEDIUM** elsewhere.
 
-**8.2 Broken anchors & placeholder URLs**
+**8.2 Broken anchors, placeholder URLs & fake navigation**
 
 Parse all `<a href>` values. Flag:
 - `href="#"` with no JavaScript handler attached (dead links)
@@ -318,6 +329,8 @@ Parse all `<a href>` values. Flag:
 - `tel:` with `+1 555 555 5555` or `+49 123 4567890` (classic AI-placeholder phone numbers)
 
 Severity: **HIGH** for visible dead/placeholder CTAs, **MEDIUM** for footer/secondary links.
+
+**Fake navigation ("links are links")**: flag elements that navigate via JavaScript instead of a real link — `<div>`/`<span>`/`<button>` whose click handler sets `location` or calls a router, or any element with computed `cursor: pointer` plus a click listener and no `href`. This is a characteristic AI-builder artifact, and it breaks Cmd/Ctrl+click, middle-click, "open in new tab", and crawler link discovery. Detect via Playwright (computed style, attached listeners, missing `href`); in Local Project Mode additionally grep the source for `onClick`-navigation patterns. Severity: **HIGH** for primary nav and CTAs, **MEDIUM** elsewhere. **Not part of the AI2 gate** — AI2 counts only placeholder-URL matches in `href`/`src` values; fake-navigation findings affect the Readiness Score only.
 
 **8.3 Placeholder images & fake social proof**
 
@@ -383,6 +396,9 @@ Every check in this category is a **measurement**, not a heuristic. Every findin
 | md | 768 × 1024 | iPad portrait |
 | lg | 1024 × 768 | iPad landscape, small laptop |
 | xl | 1280 × 800 | Mainstream laptop |
+| xxl | 1920 × 1080 | Ultra-wide / external monitor — **report-only** |
+
+`xxl` extends coverage to ultra-wide desktops, where AI-generated layouts often let content stretch unconstrained past ~1400 px (full-width text lines, stretched hero images). It is **report-only**: gates Resp1/Resp2 keep evaluating exactly the five canonical breakpoints (xs–xl), so the 2Prod gate set and its cross-run comparability stay unchanged. xxl findings affect the Readiness Score only.
 
 For each breakpoint, run a Playwright script that: sets `viewport`, navigates, waits for `document.readyState === 'complete'` plus a 500 ms settle, collects all measurements in one `page.evaluate(...)` batch, saves a full-page screenshot to `artifacts/responsive/<breakpoint>.png`, then moves on. Screenshots are kept across runs so re-tests can diff visually.
 
@@ -411,20 +427,21 @@ Output a compact matrix — one row per check, one column per breakpoint, each c
 
 ```
 Responsiveness (Cat 9)
-                              xs     sm     md     lg     xl
-Horizontal overflow            ✗      ✓      ✓      ✓      ✓
-Tap-targets <24px              7      3      0      0      0
-Tap-targets <44px             18      9      2      0      0
-Body font-size <16px           ✗      ✗      —      —      —
-Input font-size <16px          ✗      ✗      —      —      —
+                              xs     sm     md     lg     xl     xxl*
+Horizontal overflow            ✗      ✓      ✓      ✓      ✓      ✓
+Tap-targets <24px              7      3      0      0      0      0
+Tap-targets <44px             18      9      2      0      0      0
+Body font-size <16px           ✗      ✗      —      —      —      —
+Input font-size <16px          ✗      ✗      —      —      —      —
 Viewport zoom-lock             OK (one value, not per bp)
 Media-query rules              14 (one value, not per bp)
-<img> missing w/h              0      0      0      0      0
-srcset differentiation         3/5    3/5    3/5    3/5    4/5
+<img> missing w/h              0      0      0      0      0      0
+srcset differentiation         3/5    3/5    3/5    3/5    4/5    4/5
 Safe-area-inset                missing (fixed header detected)
-Content clipping               2      1      0      0      0
+Content clipping               2      1      0      0      0      0
 
-Screenshots: artifacts/responsive/{xs,sm,md,lg,xl}.png
+* xxl is report-only — not evaluated by gates Resp1/Resp2.
+Screenshots: artifacts/responsive/{xs,sm,md,lg,xl,xxl}.png
 ```
 
 For re-test in Phase 5, the same matrix is regenerated and every cell becomes a delta (e.g., `Tap-targets <24px: 7 → 0 (-7)`). Screenshots are kept so the user can pixel-diff before/after.
@@ -590,7 +607,7 @@ If any veto fails, 2Prod = 🔴 BLOCKED. Display the failed veto ID(s) inline. D
 | **Assets** |
 | As1 | Favicon | `link[rel=icon]` is present in HTML, OR `<url>/favicon.ico` returns HTTP 200 |
 | **Responsiveness** (from Cat 9 Playwright multi-breakpoint) |
-| Resp1 | No horizontal overflow | `documentElement.scrollWidth > clientWidth` is false at all five breakpoints (xs, sm, md, lg, xl) |
+| Resp1 | No horizontal overflow | `documentElement.scrollWidth > clientWidth` is false at all five canonical breakpoints (xs, sm, md, lg, xl — the xxl report-only breakpoint is not gate-evaluated) |
 | Resp2 | Tap-targets ≥ 24×24 px on mobile | at xs (320 px) AND sm (375 px) breakpoints, the count of `button, a, input, select, [role=button]` with bounding-box width < 24 OR height < 24 is 0 |
 | **AI-slop** |
 | AI1 | No placeholder text | Cat 8.1 placeholder-content scan returns 0 matches in rendered text |
@@ -652,6 +669,7 @@ Every audit computes a single 0–100 Readiness Score. This is the headline numb
 - SEO & Meta = `(Lighthouse SEO score) × 12`
 - Findings from these categories are still *listed* in the report (with their fix and a point estimate), but the category total comes solely from the Lighthouse score — the listed findings explain *why* Lighthouse marked it down, they are not re-deducted.
 - Cat 9 tap-target / zoom findings live in Responsiveness (Method B), **not** Accessibility, so they never double-count against this a11y score.
+- Likewise, focus-visibility and form-hygiene findings live in Cat 7 Robustness (Method B, interaction hygiene), **not** Accessibility — same double-count rule.
 
 **Method B — per-check deduction (all other categories: Responsiveness, Security, AI-Slop, Robustness, Assets, HTML Quality, Stack Freshness).**
 1. The category starts at its full weight (its "cap").
@@ -682,7 +700,7 @@ The 10 technical categories are aggregated into 5 user-visible impact groups. Fi
 | **Responsiveness** (how it holds up across devices) | Cat 9 Responsiveness, plus Cat 2 tap-target/zoom findings |
 | **Findability** (how the site behaves for search & social) | Cat 3 SEO & Meta, Cat 4 HTML Quality |
 | **Security & Trust** (real technical risk) | Cat 5 Security, Cat 7 Robustness (console-error/404 subset) |
-| **Polish** (looks finished vs. draft) | Cat 2 Accessibility, Cat 6 Assets, Cat 8 AI-Slop Detection, Cat 10 Stack Freshness |
+| **Polish** (looks finished vs. draft) | Cat 2 Accessibility, Cat 6 Assets, Cat 7 Robustness (interaction-hygiene subset), Cat 8 AI-Slop Detection, Cat 10 Stack Freshness |
 
 Findings inside a group are sorted by severity (CRITICAL → HIGH → MEDIUM → LOW), then by point cost within severity (biggest impact first).
 
@@ -716,9 +734,9 @@ Horizontal overflow at xs breakpoint: documentElement.scrollWidth = 360 px, clie
 
 Assign severity to each issue:
 - **CRITICAL**: Blocks production. Broken functionality, major accessibility violations (no keyboard nav, missing alt on critical images), security vulnerabilities (no HTTPS, mixed content), critical performance (LCP > 4s), visible AI-slop in primary CTAs.
-- **HIGH**: Significant impact. Poor Core Web Vitals, missing OG/meta tags, missing security headers, visible Lorem ipsum, hallucinated meta tags, horizontal overflow on common mobile breakpoints, installed framework two+ majors behind current.
-- **MEDIUM**: Should fix. Minor a11y issues, missing JSON-LD, no compression, suboptimal image formats, duplicate sections, stock-logo walls without attribution.
-- **LOW**: Nice to have. No print stylesheet, missing noscript, no dark mode support, minor HTML warnings.
+- **HIGH**: Significant impact. Poor Core Web Vitals, missing OG/meta tags, missing security headers, visible Lorem ipsum, hallucinated meta tags, horizontal overflow on common mobile breakpoints, installed framework two+ majors behind current, focus rings stripped without `:focus-visible` replacement, fake JS navigation on primary nav/CTAs.
+- **MEDIUM**: Should fix. Minor a11y issues, missing JSON-LD, no compression, suboptimal image formats, duplicate sections, stock-logo walls without attribution, form inputs without `autocomplete`/correct `type`, paste blocking.
+- **LOW**: Nice to have. No print stylesheet, missing noscript, no dark mode support, minor HTML warnings, `transition: all`, missing `theme-color`/`color-scheme`.
 
 ### Report Format
 
@@ -776,7 +794,7 @@ Performance <n>/17 | Accessibility <n>/17 | Responsiveness <n>/17 | Security <n>
 Lighthouse report: artifacts/lh-report.json
 axe-core report: artifacts/axe-report.json
 W3C validation: artifacts/w3c-report.json
-Responsiveness screenshots: artifacts/responsive/{xs,sm,md,lg,xl}.png
+Responsiveness screenshots: artifacts/responsive/{xs,sm,md,lg,xl,xxl}.png
 ```
 
 Groups with no findings are **omitted** from the "Issues by impact" block — if the site has no Findability issues, skip the whole `#### Findability` subsection rather than printing "no issues".
@@ -811,6 +829,11 @@ For each issue to fix:
 - Self-host Google Fonts (download and replace CDN references)
 - Add viewport meta tag
 - Add noscript fallback
+- Add `<meta name="theme-color">` (inferred from page background) and `color-scheme` on `<html>` for dark themes
+- Replace `transition: all` with the explicit property list (only when statically inferable from the hover/focus rules)
+- Add `autocomplete`, correct `type`, and `inputmode` to form inputs (show the diff — low-risk, but it changes browser behavior)
+- Restore focus rings: add a `:focus-visible` rule where `outline: none` stripped it (propose the CSS and wait for approval — it touches the design layer)
+- Convert fake JS navigation (`<div onClick>`-style) to real `<a href>` links (propose the diff and wait for approval — touches markup and JS behavior)
 - **AI-slop fixes**: replace Lorem ipsum / placeholder headings with sensible drafts (and always ask the user to review), swap `example.com`/`yoursite.com` placeholders to real URLs (asking the user first), remove duplicate sections, fix hallucinated `og:url`, clear fake testimonial blocks.
 
 **2. Manual fix** (cannot be auto-fixed, provide instructions):

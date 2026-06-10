@@ -30,9 +30,10 @@ vibe2prod does **not** make legal claims. It does not check "is your Impressum p
 - **Reproducible Performance** — Lighthouse runs 3× per audit, median feeds both 2Prod gates and the Readiness Score. No more ±5-point jitter between runs.
 - **Dual-audience report** — every finding is rendered in four lines: traffic-light headline, plain-language impact, technical detail with metric + reference URL, and a concrete fix. Vibe-coders can stop reading after line 2; pros skip straight to lines 3–4.
 - **Impact grouping** — issues are organized by what users actually notice: Speed, Responsiveness, Findability, Security & Trust, Polish. The technical category label stays on every finding for pros.
-- **Quantitative responsiveness** — 5-breakpoint Playwright measurements (320 / 375 / 768 / 1024 / 1280 px) produce a diff-able matrix, not a vibe.
+- **Quantitative responsiveness** — 6-breakpoint Playwright measurements (320 / 375 / 768 / 1024 / 1280 / 1920 px) produce a diff-able matrix, not a vibe. The 1920 px ultra-wide breakpoint is report-only; the 2Prod gates stay on the canonical five.
 - **Live stack-freshness check** — queries the npm registry and nodejs.org directly. Training data is 3–9 months stale and vibe2prod refuses to fall back on it.
-- **AI-slop detection** — Lorem ipsum, placeholder images (`picsum.photos`, `via.placeholder.com`), broken anchors (`#`, `example.com`), fake testimonials, hallucinated meta tags, duplicate hero sections.
+- **AI-slop detection** — Lorem ipsum, placeholder images (`picsum.photos`, `via.placeholder.com`), broken anchors (`#`, `example.com`), fake JS navigation (`<div onClick>` instead of real links), fake testimonials, hallucinated meta tags, duplicate hero sections.
+- **Interaction hygiene** — checks derived from Vercel's [web-interface-guidelines](https://github.com/vercel-labs/web-interface-guidelines): visible focus rings (no `outline: none` without `:focus-visible` replacement), form `autocomplete`/`type`/`inputmode`, paste blocking, `transition: all`, `theme-color` and `color-scheme`.
 - **Works with any coding agent** — native Claude Code flow (audit → fix → re-test) plus a `fix-me.md` export that hands the remaining work to Cursor, Lovable, v0, or a developer with copy-paste-ready diffs and verification steps.
 - **No aggressive image compression** — vibe2prod never recommends below 85 % quality. Real wins come from the right format (WebP/AVIF) and correct responsive sizes.
 
@@ -162,12 +163,12 @@ Then run it again to see the diff:
 
 1. **Performance** (weight 17) — Lighthouse + optional PageSpeed Insights. Core Web Vitals (LCP, INP, CLS), render blocking, compression.
 2. **Accessibility** (weight 17) — Lighthouse a11y + axe-core. Color contrast, alt text, ARIA, keyboard, touch targets, focus management.
-3. **Responsiveness** (weight 17) — quantitative multi-breakpoint tests (320 / 375 / 768 / 1024 / 1280 px) via Playwright. Horizontal overflow, tap-target size (WCAG 2.5.5 + 2.5.8), body/input font-sizes, viewport meta, media-query coverage, `<img>` w/h attrs, `srcset` effectiveness, safe-area insets, content clipping. Output is a matrix, not a vibe.
+3. **Responsiveness** (weight 17) — quantitative multi-breakpoint tests (320 / 375 / 768 / 1024 / 1280 px, plus a report-only 1920 px ultra-wide pass) via Playwright. Horizontal overflow, tap-target size (WCAG 2.5.5 + 2.5.8), body/input font-sizes, viewport meta, media-query coverage, `<img>` w/h attrs, `srcset` effectiveness, safe-area insets, content clipping. Output is a matrix, not a vibe.
 4. **Security** (weight 12) — HTTPS, HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, cookie flags, mixed content.
 5. **SEO & Meta** (weight 12) — title/description lengths, Open Graph tags, Twitter cards, canonical, JSON-LD, sitemap, robots.
-6. **AI-Slop Detection** (weight 8) — vibe2prod's signature check. Placeholder content (Lorem ipsum, "Your text here", "TODO"), broken anchors (`#`, `example.com`, `yoursite.com`), placeholder images (`via.placeholder.com`, `picsum.photos`), fake testimonials ("John Doe"), stock-logo walls without attribution, hallucinated meta tags, duplicate hero sections.
-7. **Robustness** (weight 7) — console errors, compression (gzip/brotli), caching headers, `prefers-reduced-motion`, `prefers-color-scheme`, viewport meta, custom 404, noscript fallback.
-8. **Assets** (weight 5) — image formats (WebP/AVIF), responsive `srcset`, font loading, favicons, manifest, broken links.
+6. **AI-Slop Detection** (weight 8) — vibe2prod's signature check. Placeholder content (Lorem ipsum, "Your text here", "TODO"), broken anchors (`#`, `example.com`, `yoursite.com`), fake JS navigation (`<div onClick>` instead of real `<a>` links), placeholder images (`via.placeholder.com`, `picsum.photos`), fake testimonials ("John Doe"), stock-logo walls without attribution, hallucinated meta tags, duplicate hero sections.
+7. **Robustness** (weight 7) — console errors, compression (gzip/brotli), caching headers, `prefers-reduced-motion`, `prefers-color-scheme`, viewport meta, custom 404, noscript fallback, plus interaction hygiene: visible focus rings, form `autocomplete`/`type`/`inputmode`, paste blocking, `transition: all`, `color-scheme`.
+8. **Assets** (weight 5) — image formats (WebP/AVIF), responsive `srcset`, font loading, favicons, manifest, `theme-color`, broken links.
 9. **HTML Quality** (weight 3) — W3C Nu Validator. Errors, warnings, semantic landmarks.
 10. **Stack Freshness** (weight 2) — live version check against the npm registry (never training knowledge). Detects outdated meta-frameworks, base frameworks, styling libs, build tools, TypeScript, and Node runtime against the current LTS schedule. Migration-guide URLs are fetched live via Context7.
 

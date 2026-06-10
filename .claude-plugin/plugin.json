@@ -1,7 +1,7 @@
 {
   "name": "vibe2prod",
   "description": "Production-readiness auditor for AI-generated websites. Audit a live URL or your local project across 10 technical categories, get the project-independent 2Prod ship verdict and a 0-100 Readiness Score, apply fixes interactively or via autopilot, and export a handoff brief for other coding agents.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "author": {
     "name": "Holger Koenemann",
     "url": "https://github.com/holger1411"
