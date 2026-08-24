@@ -2,7 +2,7 @@
 
 > **AI-generated sites aren't "slop" — they're drafts.** vibe2prod's job is to close the gap between draft and prod, not to shame the author. Every check has a concrete, actionable fix attached, and every fix that touches user-visible copy is proposed (not silently applied).
 
-**vibe2prod** is a Claude Code plugin that audits websites across **10 technical categories** — performance, accessibility, SEO, HTML quality, security, assets, robustness, AI-slop artifacts, responsiveness (quantitative multi-breakpoint tests), and stack freshness (live npm-registry version checks, never training knowledge) — produces a project-independent **2Prod ship verdict** (READY → BLOCKED) and a **0–100 Readiness Score**, helps you fix what it finds, and re-tests with a before/after comparison.
+**vibe2prod** is a Claude Code plugin that audits websites across **10 scored technical categories plus a report-only agent-readiness pass** — performance, accessibility, SEO, HTML quality, security, assets, robustness, AI-slop artifacts, responsiveness (quantitative multi-breakpoint tests), and stack freshness (live npm-registry version checks, never training knowledge) — produces a project-independent **2Prod ship verdict** (READY → BLOCKED) and a **0–100 Readiness Score**, helps you fix what it finds, and re-tests with a before/after comparison.
 
 **Two headline numbers, two questions.** *Can I publish this now?* → 2Prod. *How good is it overall?* → Readiness Score. 2Prod is strict, project-independent, and reproducible across runs (5 vetos + 27 hard binary gates, all hard-coded). Readiness Score is nuanced and weighted. Both ship in every report.
 
@@ -26,14 +26,16 @@ vibe2prod does **not** make legal claims. It does not check "is your Impressum p
 - **2Prod verdict** — a project-independent ship/no-ship traffic light (🟢 READY · 🟢 Light Green · 🟡 NOT YET · 🟠 NEEDS WORK · 🔴 BLOCKED) computed from 5 hard vetos (HTTPS, site loads, title, viewport, no leaked secrets) plus 27 hard binary gates with fixed thresholds. Reproducible across runs (identical inputs give the same band barring metrics sitting exactly on a threshold). Includes the Googlebot 2 MB indexing-limit gate and a READY-band guard for mobile horizontal overflow.
 - **Dual mode** — audit a live URL or your local project. In local mode, vibe2prod builds your project in prod mode, starts the prod server locally (never the dev server, because dev bundles produce misleading Lighthouse scores), audits, and cleans up.
 - **Framework-aware local builds** — Vite, Next.js, Astro, SvelteKit, Nuxt, Remix, and plain static HTML all handled out of the box.
-- **Readiness Score (0–100)** — a nuanced second headline, weighted across the 10 categories. Each finding shows how many points fixing it is worth.
+- **Readiness Score (0–100)** — a nuanced second headline, weighted across the 10 scored categories. Each finding shows how many points fixing it is worth.
 - **Reproducible Performance** — Lighthouse runs 3× per audit, median feeds both 2Prod gates and the Readiness Score. No more ±5-point jitter between runs.
 - **Dual-audience report** — every finding is rendered in four lines: traffic-light headline, plain-language impact, technical detail with metric + reference URL, and a concrete fix. Vibe-coders can stop reading after line 2; pros skip straight to lines 3–4.
 - **Impact grouping** — issues are organized by what users actually notice: Speed, Responsiveness, Findability, Security & Trust, Polish. The technical category label stays on every finding for pros.
 - **Quantitative responsiveness** — 6-breakpoint Playwright measurements (320 / 375 / 768 / 1024 / 1280 / 1920 px) produce a diff-able matrix, not a vibe. The 1920 px ultra-wide breakpoint is report-only; the 2Prod gates stay on the canonical five.
 - **Live stack-freshness check** — queries the npm registry and nodejs.org directly. Training data is 3–9 months stale and vibe2prod refuses to fall back on it.
-- **AI-slop detection** — Lorem ipsum, placeholder images (`picsum.photos`, `via.placeholder.com`), broken anchors (`#`, `example.com`), fake JS navigation (`<div onClick>` instead of real links), fake testimonials, hallucinated meta tags, duplicate hero sections.
+- **AI-slop detection** — Lorem ipsum, placeholder images (`picsum.photos`, `via.placeholder.com`), broken anchors (`#`, `example.com`), fake JS navigation (`<div onClick>` instead of real links), fake testimonials, hallucinated meta tags, duplicate hero sections, and **alt-text quality** (`alt="hero-2.jpg"`, `alt="image"`, one alt reused across every image — axe and Lighthouse only check that `alt` exists, never whether it says anything).
 - **Interaction hygiene** — checks derived from Vercel's [web-interface-guidelines](https://github.com/vercel-labs/web-interface-guidelines): visible focus rings (no `outline: none` without `:focus-visible` replacement), form `autocomplete`/`type`/`inputmode`, paste blocking, `transition: all`, `theme-color` and `color-scheme`.
+- **Zoom & focus hygiene** — 200 % text zoom (WCAG 1.4.4: overflow, clipped text, overlapping controls at doubled text size — a different failure mode than a narrow viewport), focus obscured by sticky headers and cookie banners (WCAG 2.4.11), DOM-vs-visual reading-order inversions (WCAG 1.3.2), and generic or inconsistent link names (`click here`, one name on two different targets, label-in-name mismatches).
+- **Agent readiness (report-only)** — `llms.txt` presence and well-formedness, content visible without JavaScript, agent-recoverable 404s, identity structured data, Markdown content negotiation, WebMCP annotations, plus a neutral note on which AI crawlers `robots.txt` blocks. **Never gated, never scored** — the specs are young and still moving, and a missing `llms.txt` has never stopped anyone from publishing. Optionally passes through Google's experimental Lighthouse `agentic-browsing` category when Lighthouse ≥ 13.3 is installed.
 - **Typography & readability hygiene** — fake bold/italic detection (font weights the browser synthesizes because they were never loaded), font-family sprawl, centered long-form text, justified text without hyphenation.
 - **Design-tell note (informational)** — if the site combines 2+ common AI-default styling patterns (Inter/Roboto as primary font, cyan-on-dark palette, purple-to-blue gradients, identical card grids, everything centered, decorative glassmorphism), the report appends a neutral heads-up. **None of these is wrong** and the score is never affected — it's purely a "visitors may read this as AI-made" signal for sites that want to look distinct.
 - **Works with any coding agent** — native Claude Code flow (audit → fix → re-test) plus a `fix-me.md` export that hands the remaining work to Cursor, Lovable, v0, or a developer with copy-paste-ready diffs and verification steps.
@@ -143,8 +145,14 @@ Performance 11/17 | Accessibility 14/17 | Responsiveness 8/17 | Security 8/12 | 
 
 ...
 
+### Agent readiness (Cat 11)
+Report-only — not part of 2Prod or the Readiness Score.
+AR1 llms.txt missing · AR2 n/a · AR3 content without JS ✓ (h1, 2,140 chars) ·
+AR4 404 recovery links ✗ · AR5 identity JSON-LD 2/4 · AR6 absent · AR7 absent
+AI-crawler policy: robots.txt disallows GPTBot, ClaudeBot — a business decision, not a defect.
+
 ### Technical Appendix
-[Responsiveness matrix, Stack Freshness table, raw tool output paths]
+[Responsiveness matrix, Stack Freshness table, raw tool output paths, run journal]
 ```
 
 After the report:
@@ -161,20 +169,24 @@ Then run it again to see the diff:
 > Test again
 ```
 
-## The 10 audit categories
+## The audit categories
 
 1. **Performance** (weight 17) — Lighthouse + optional PageSpeed Insights. Core Web Vitals (LCP, INP, CLS), render blocking, compression.
-2. **Accessibility** (weight 17) — Lighthouse a11y + axe-core. Color contrast, alt text, ARIA, keyboard, touch targets, focus management.
+2. **Accessibility** (weight 17) — Lighthouse a11y + axe-core. Color contrast, alt-text presence, ARIA, keyboard, touch targets, focus management. (Alt-text *quality*, focus obscuring, reading order, and link names are measured in Cat 8 and Cat 7 respectively, so nothing is counted twice against this Lighthouse score.)
 3. **Responsiveness** (weight 17) — quantitative multi-breakpoint tests (320 / 375 / 768 / 1024 / 1280 px, plus a report-only 1920 px ultra-wide pass) via Playwright. Horizontal overflow, tap-target size (WCAG 2.5.5 + 2.5.8), body/input font-sizes, viewport meta, media-query coverage, `<img>` w/h attrs, `srcset` effectiveness, safe-area insets, content clipping. Output is a matrix, not a vibe.
 4. **Security** (weight 12) — HTTPS, HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, cookie flags, mixed content.
 5. **SEO & Meta** (weight 12) — title/description lengths, Open Graph tags, Twitter cards, canonical, JSON-LD, sitemap, robots.
-6. **AI-Slop Detection** (weight 8) — vibe2prod's signature check. Placeholder content (Lorem ipsum, "Your text here", "TODO"), broken anchors (`#`, `example.com`, `yoursite.com`), fake JS navigation (`<div onClick>` instead of real `<a>` links), placeholder images (`via.placeholder.com`, `picsum.photos`), fake testimonials ("John Doe"), stock-logo walls without attribution, hallucinated meta tags, duplicate hero sections.
-7. **Robustness** (weight 7) — console errors, compression (gzip/brotli), caching headers, `prefers-reduced-motion`, `prefers-color-scheme`, viewport meta, custom 404, noscript fallback, plus interaction hygiene (visible focus rings, form `autocomplete`/`type`/`inputmode`, paste blocking, `transition: all`, `color-scheme`) and readability hygiene (centered long-form text, justified text without hyphenation).
+6. **AI-Slop Detection** (weight 8) — vibe2prod's signature check. Placeholder content (Lorem ipsum, "Your text here", "TODO"), broken anchors (`#`, `example.com`, `yoursite.com`), fake JS navigation (`<div onClick>` instead of real `<a>` links), placeholder images (`via.placeholder.com`, `picsum.photos`), fake testimonials ("John Doe"), stock-logo walls without attribution, hallucinated meta tags, duplicate hero sections, and alt-text quality (filename-style `alt`, generic `alt="image"`, one alt reused across every image, "image of …" prefixes).
+7. **Robustness** (weight 7) — console errors, compression (gzip/brotli), caching headers, `prefers-reduced-motion`, `prefers-color-scheme`, viewport meta, custom 404, noscript fallback, plus interaction hygiene (visible focus rings, form `autocomplete`/`type`/`inputmode`, paste blocking, `transition: all`, `color-scheme`), readability hygiene (centered long-form text, justified text without hyphenation), and zoom & focus hygiene (200 % text zoom per WCAG 1.4.4, focus obscured per WCAG 2.4.11, reading order per WCAG 1.3.2, generic and inconsistent link names per WCAG 2.4.4 / 2.5.3).
 8. **Assets** (weight 5) — image formats (WebP/AVIF), responsive `srcset`, font loading, fake bold/italic detection, font-family sprawl, favicons, manifest, `theme-color`, broken links.
 9. **HTML Quality** (weight 3) — W3C Nu Validator. Errors, warnings, semantic landmarks.
 10. **Stack Freshness** (weight 2) — live version check against the npm registry (never training knowledge). Detects outdated meta-frameworks, base frameworks, styling libs, build tools, TypeScript, and Node runtime against the current LTS schedule. Migration-guide URLs are fetched live via Context7.
 
+11. **Agent Readiness** (report-only, weight 0) — how legible the site is to assistant browsing, LLM answer engines, and MCP-driven automation: `llms.txt` presence and well-formedness, content present without JavaScript, agent-recoverable 404 pages, identity JSON-LD completeness, Markdown content negotiation, WebMCP annotations. Plus a neutral, never-scored note on which AI crawlers `robots.txt` disallows — blocking them is a business decision, not a defect.
+
 Weights sum to 100 → the Readiness Score. Stack Freshness runs in local-project mode only; in remote-URL mode its 2 points are redistributed across the other 9 categories so the score still totals 100.
+
+**Why Agent Readiness carries weight 0.** It is deliberately outside both headline numbers. 2Prod answers "can I publish this now?" and a missing `llms.txt` is not a ship blocker; adding Cat 11 to the Readiness Score would make every previously recorded score incomparable and would penalise sites that deliberately skip agent optimisation. Same precedent as the report-only 1920 px breakpoint and the informational design-tell note.
 
 ## Philosophy
 
