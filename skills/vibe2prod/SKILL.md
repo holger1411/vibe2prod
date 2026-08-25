@@ -154,6 +154,20 @@ After the audit completes (or fails), **always** kill the server process and rem
 
 Run all checks against `url` (either the remote URL or the local prod server). Execute independent checks in parallel where possible. Collect all results before generating the report.
 
+### Shared measurement rules
+
+Two things distort DOM-counting checks if measured naively. **Every check in Cat 7 and Cat 9 that counts elements applies both rules**, unless that check explicitly says otherwise.
+
+**1. Visually-hidden elements are never counted.** Treat an element as visually hidden when any of these holds:
+
+- it, or an ancestor, matches the visually-hidden pattern — `clip: rect(0, 0, 0, 0)`, `clip-path: inset(50%)`, or a class of `sr-only` / `visually-hidden` / `screen-reader-text` / `a11y-hidden`
+- its border box is ≤ 1 × 1 CSS px
+- `getBoundingClientRect()` returns zero width or zero height (not rendered — collapsed, filtered out, or `display: none`)
+
+These elements are *supposed* to be clipped and undersized; that is how the pattern is implemented. Counting them invents failures the site cannot fix without breaking accessibility. A skip link that measures 1 × 1 px until it receives focus is a **correctly built** skip link, not a 24-px tap-target violation.
+
+**2. Report what the filter removed.** Whenever a filter drops elements from a count, put both numbers in the technical line — `2 raw → 0 after WCAG exclusions (1 × .sr-only skip link, 1 × inline link in a sentence)`. A silent filter is indistinguishable from a check that quietly stopped working, and the reader cannot audit what they cannot see.
+
 ### Category 1: Performance
 
 Run Lighthouse **3 times** and take the **median** per metric. Single-run perf scores jitter ±5–10 points between runs from network and CPU variance — the median is what makes the 2Prod gates and the Readiness Score reproducible. The median values feed both.
@@ -237,9 +251,18 @@ Validate HTML via W3C Nu Validator (skip if `url` is localhost — the validator
 curl -s -H "Content-Type: text/html; charset=utf-8" --data-binary @page.html "https://validator.w3.org/nu/?out=json" -o w3c-report.json
 ```
 
+**Split the messages before counting.** The Nu Validator bundles a CSS checker alongside the HTML parser, and its CSS property database lags shipped browser CSS by a long way — a page using a modern property can collect dozens of `error`-typed messages while its HTML is flawless. Sort every message into one of three buckets by its `message` string:
+
+1. **HTML errors** — `type == "error"` and the message does **not** start with `CSS:`. This is the bucket gate **H1** counts, and the only one that can fail it. HTML validity is what H1 claims to measure; CSS validity never was.
+2. **CSS vocabulary messages** — message starts with `CSS:` and matches an unknown-vocabulary complaint: `Property “…” doesn't exist`, `Unknown pseudo-element or pseudo-class`, `Unknown at-rule`. These are almost always validator lag rather than a defect. Report them as a single **informational** line with the count and the distinct property/selector names, never as a finding and never with a severity.
+3. **Other CSS messages** — anything else starting with `CSS:` (parse errors, malformed values). Report as **LOW**: the browser drops the offending declaration, so it is a tidiness issue, not a ship blocker.
+
+Never collapse buckets 2 and 3 into "31 errors". Print the split. A reader who sees `0 HTML errors · 31 CSS vocabulary messages (view-transition-name)` knows immediately that nothing is wrong with the page; a reader who sees `31 errors` goes looking for a defect that does not exist.
+
 Extract and report:
-- **Errors**: Count and list HTML validation errors
-- **Warnings**: Count and list warnings
+- **HTML errors**: count and list (bucket 1)
+- **CSS messages**: the bucket 2 count with distinct names, and the bucket 3 list
+- **Warnings**: count and list `type != "error"` messages
 - **Semantic issues**: Missing landmarks, incorrect heading nesting
 
 ### Category 5: Security
@@ -308,7 +331,7 @@ Use Playwright for runtime checks and curl for headers:
 
 **Zoom & focus hygiene** (same measurement discipline; runs inside the existing Playwright round at the xl viewport, so it costs no extra page load):
 
-- **Text zoom 200 %** (WCAG 1.4.4 Resize Text): at 1280 × 800, set `document.documentElement.style.fontSize = '32px'` (2× the 16 px browser default), wait one animation frame, then measure (a) `documentElement.scrollWidth > clientWidth`, (b) the count of elements with `overflow: hidden`/`clip` whose `scrollHeight > clientHeight + 2` or `scrollWidth > clientWidth + 2` (text clipped away instead of reflowing), (c) the count of interactive elements whose bounding boxes now overlap. Reset the font-size afterwards. Severity **HIGH** for (a), **MEDIUM** for (b) and (c). This is deliberately **not** a Cat 9 breakpoint: Cat 9 varies viewport *width*, this varies text *size* at a fixed width, and the two break different layouts. Gates Resp1/Resp2 are unaffected.
+- **Text zoom 200 %** (WCAG 1.4.4 Resize Text): at 1280 × 800, set `document.documentElement.style.fontSize = '32px'` (2× the 16 px browser default), wait one animation frame, then measure (a) `documentElement.scrollWidth > clientWidth`, (b) the count of elements with `overflow: hidden`/`clip` whose `scrollHeight > clientHeight + 4` or `scrollWidth > clientWidth + 4` (text clipped away instead of reflowing) — applying the **visually-hidden** rule from *Shared measurement rules*, and counting only elements that actually contain text, so `.sr-only` containers and decorative background layers do not register as clipped content, (c) the count of interactive elements whose bounding boxes now overlap. Reset the font-size afterwards. Severity **HIGH** for (a), **MEDIUM** for (b) and (c). This is deliberately **not** a Cat 9 breakpoint: Cat 9 varies viewport *width*, this varies text *size* at a fixed width, and the two break different layouts. Gates Resp1/Resp2 are unaffected.
 - **Focus obscured** (WCAG 2.4.11, AA in WCAG 2.2): Tab through the first 60 focusable elements. For each, take the focused element's bounding box and call `document.elementFromPoint()` at its center and at the midpoint of its top edge; if the returned node is neither the focused element nor one of its ancestors/descendants, the focus ring is covered — almost always by a sticky header, a cookie banner, or a fixed chat widget. Report each obscured selector together with the covering element. Severity **HIGH**. The focus-*visibility* check above asks whether a ring is drawn at all; this one asks whether you can see it.
 - **Reading order** (WCAG 1.3.2 Meaningful Sequence): collect all focusable elements plus headings in DOM order with their bounding boxes. Sort a copy visually (top, then left, with a 12 px row tolerance so items on one line keep reading order). Count the positions where the two sequences disagree by more than one row band — those are the elements a screen-reader or keyboard user meets in a different order than a sighted visitor. Report the inversion count plus the first 5 offending selectors. Usual cause: CSS `order`, `row-reverse`/`column-reverse`, or absolute positioning used for layout. Severity **MEDIUM**.
 - **Generic and inconsistent link names** (WCAG 2.4.4 / 2.5.3): compute each link's accessible name (`aria-label` → `aria-labelledby` → text content → `title` → nested `img[alt]`) and flag three things. (a) A name that is exactly one of `click here`, `here`, `read more`, `learn more`, `more`, `link`, `this`, `details`, `download`, `→` — out of context it says nothing, and screen-reader users navigate by link list. (b) Two or more links sharing one accessible name but pointing at different `href` values. (c) **Label-in-Name**: the link's visible text is not contained in its accessible name — typically an `aria-label` overriding the visible label, which breaks voice control, because the user says what they read and nothing matches. Severity **MEDIUM** each.
@@ -454,19 +477,29 @@ For each breakpoint, run a Playwright script that: sets `viewport`, navigates, w
 | Check | Measurement | Threshold | Severity |
 |---|---|---|---|
 | Horizontal overflow | `documentElement.scrollWidth > clientWidth` | Must be false | **CRITICAL** if true at ≤ 768 px |
-| Tap-target size (AA) | Count of `button, a, input, select, [role="button"]` with `bbox < 24×24` CSS px | 0 failures | **HIGH** (WCAG 2.5.8) |
-| Tap-target size (AAA) | Same measurement, 44×44 threshold | Report % passing | **MEDIUM** (WCAG 2.5.5) |
+| Tap-target size (AA) | Count of `button, a, input, select, [role="button"]` that are **eligible** (see below) with `bbox < 24×24` CSS px | 0 failures | **HIGH** (WCAG 2.5.8) |
+| Tap-target size (AAA) | Same eligible set, 44×44 threshold | Report % passing | **MEDIUM** (WCAG 2.5.5) |
 | Tap-target spacing | For each target: 24 px circle around its center — does it intersect another target? | 0 intersections | **MEDIUM** (WCAG 2.5.8 spacing exception) |
-| Body-text font-size | `getComputedStyle(p, li).fontSize` at ≤ 768 px | ≥ 16 px | **MEDIUM** |
+| Body-text font-size | `getComputedStyle(p, li).fontSize` at ≤ 768 px, **prose only** (see below) | ≥ 16 px | **MEDIUM** |
 | Input font-size | `getComputedStyle(input, textarea, select).fontSize` at ≤ 768 px | ≥ 16 px (below this, iOS auto-zooms on focus) | **HIGH** |
 | Viewport meta zoom-lock | Parse `<meta name="viewport">` content | No `user-scalable=no` or `maximum-scale ≤ 1` | **HIGH** (WCAG 1.4.4) |
 | Media-query coverage | Count of `@media` rules across all stylesheets | ≥ 1 | **CRITICAL** if 0 (site is not responsive at all) |
 | `<img>` width/height attrs | Count of `<img>` missing either attribute | 0 missing | **MEDIUM** (prevents CLS) |
 | `srcset` effectiveness | For each `<img srcset>`: compare `currentSrc` at xs vs xl | Different sources | **LOW** (confirms srcset is wired up) |
 | Safe-area-inset usage | CSS contains `env(safe-area-inset-*)` on any fixed/sticky element | Present if the site has a fixed header/footer | **LOW** |
-| Content clipping | Elements with `scrollWidth > clientWidth` AND no `overflow: auto/scroll` set | 0 | **MEDIUM** |
+| Content clipping | Non-hidden elements holding text, with `scrollWidth > clientWidth + 4` AND no `overflow: auto/scroll` set | 0 | **MEDIUM** |
 
-Where WCAG rules apply (tap-target size, zoom-lock), prefer the existing axe-core rule output from Category 2 over re-implementing. Do not double-count issues — if axe already flagged it, reference the axe finding instead of creating a new one.
+**Which tap targets are eligible.** Start from every rendered `button, a, input, select, [role="button"]`, then remove:
+
+- everything caught by the **visually-hidden** rule in *Shared measurement rules* — skip links above all
+- targets covered by the **WCAG 2.5.8 "Inline" exception**: the target sits in a sentence, or its size is otherwise constrained by the line-height of surrounding non-target text. Detect it as: computed `display` starts with `inline` **and** the element has a `p`, `li`, `blockquote`, `figcaption`, or `td` ancestor whose text is longer than the target's own text (i.e. there really is a sentence around it). A link set mid-paragraph is 19 px tall because the line is 19 px tall; enlarging it would break the paragraph, which is exactly why the exception exists. A link that is the *only* content of its paragraph is **not** covered — there is no surrounding non-target text to constrain it.
+- targets covered by the **WCAG 2.5.8 "Spacing" exception**: an undersized target passes if a 24 CSS px diameter circle centred on its bounding box intersects neither another target's box nor another undersized target's circle. This is already measured one row above in the check table — **use that measurement here** instead of re-deriving it. An isolated link with nothing within 24 px of it meets the success criterion at its measured size, and reporting it as a failure sends the user to "fix" something WCAG explicitly permits.
+
+Apply the exceptions in that order and report per rule 2 above: raw count, eligible count, and which exception removed what. If the eligible count is 0 but the raw count was not, say so explicitly — that is a meaningful result, not an empty one. **Name the exception you applied.** "Excluded as inline" and "excluded by spacing" are different claims about the page, and only one of them is true for any given target; getting it wrong hides a real failure or invents one.
+
+**Which paragraphs count as prose.** The body-text font-size check measures reading text, not labels. Include a `p`/`li` only when it is not visually hidden and holds **≥ 15 words**. Tech-stack tags, section eyebrows, star counts, badges, and footer one-liners are metadata; typographic convention sets them smaller on purpose, and flagging them buries the case this check exists for — actual body copy set too small to read on a phone. Report the font-size **distribution** across prose paragraphs (e.g. `16 px × 27, 20 px × 7, 24 px × 1 — 0 prose paragraphs below 16 px`), not a bare failure count, and mention the smallest non-prose size separately when it falls below 11 px.
+
+Where WCAG rules apply (tap-target size, zoom-lock), prefer the existing axe-core rule output from Category 2 over re-implementing. Do not double-count issues — if axe already flagged it, reference the axe finding instead of creating a new one. When your own measurement and axe disagree on a WCAG rule, **axe wins** and the disagreement goes in the report — it usually means the re-implementation is missing an exception axe already encodes.
 
 #### Report output
 
@@ -684,7 +717,7 @@ Every run writes to `.vibe2prod/` — in the audited project root (Local Project
 **Run journal (`runs.jsonl`).** Append exactly one JSON object per completed run:
 
 ```json
-{"run":"20260824-171205","url":"https://example.com","mode":"remote","skill_version":"0.7.0",
+{"run":"20260824-171205","url":"https://example.com","mode":"remote","skill_version":"0.7.1",
  "twoprod":{"band":"NOT YET","pct":74.1,"passed":20,"denominator":27,
             "failed":["S2","H1","Sec1"],"deferred":[],"inconclusive":[],"vetos_failed":[]},
  "readiness":62,
@@ -755,7 +788,7 @@ If any veto fails, 2Prod = 🔴 BLOCKED. Display the failed veto ID(s) inline. D
 | S5 | Sitemap + robots | `<url>/sitemap.xml` AND `<url>/robots.txt` both return HTTP 200 after redirect-following |
 | S6 | HTML within Google indexing limit | raw HTML response body byte count ≤ 2,097,152 bytes (2 MB). Googlebot stops processing at 2 MB; content past this is not indexed. |
 | **HTML quality** |
-| H1 | HTML valid (raw response) | W3C Nu Validator on the raw HTML response body returns 0 messages with `type == "error"` |
+| H1 | HTML valid (raw response) | W3C Nu Validator on the raw HTML response body returns 0 messages that are `type == "error"` **and** whose `message` does not start with `CSS:` (bucket 1 in Cat 4). CSS-checker messages never fail this gate — the validator's CSS vocabulary lags shipped browser CSS, and H1 measures HTML validity. |
 | **Security** |
 | Sec1 | HSTS | `strict-transport-security` header on the final response is present |
 | Sec2 | MIME sniffing protection | `x-content-type-options` header on the final response is exactly `nosniff` (case-insensitive) |
@@ -798,7 +831,7 @@ If any veto fails, 2Prod = 🔴 BLOCKED. Display the failed veto ID(s) inline. D
 #### Stability rules
 
 - All thresholds above are **constants**. Do not adjust them based on project type, framework, hosting provider, or user request.
-- The set of 5 vetos + 27 regular gates is fixed. Adding or removing gates is a versioned skill change, not a per-audit decision.
+- The set of 5 vetos + 27 regular gates is fixed. Adding or removing gates is a versioned skill change, not a per-audit decision. **Refining what an existing gate measures is also a versioned change** — it keeps the count at 27 but makes percentages non-comparable across the version boundary. Record `skill_version` in the run journal (see *Persistence & artifacts*) and have Phase 5 say so rather than printing a delta that reads like the site changed.
 - **Distinguish a site defect from a tooling outage.** If the *site* genuinely lacks something the gate checks → record the gate as **failed**. If the *measurement itself* could not be taken because a tool or external service was unreachable → record it **INCONCLUSIVE** and drop it from numerator and denominator (per the Inconclusive-measurement rule above). The old "always fail, never skip" stance is wrong: it turns a W3C-validator outage into a phantom HTML defect the user can't fix. Project-independence still holds for *defects* — a site with the same defects scores the same; tooling outages are explicitly flagged as reduced-confidence rather than silently folded into the score.
 - **Determinism is best-effort, not absolute.** Median-of-3 removes most Lighthouse jitter, but a metric sitting right on a threshold (e.g. perf score hovering at 0.80, LCP at ~4000 ms) can still flip a gate run-to-run. 2Prod is **reproducible** (same site → same result in the overwhelming majority of runs), not mathematically **identical** every time. Do not promise bit-identical scores.
 - vibe2prod evaluates the **root URL only**. Multi-route, deep-link, and authenticated-area audits are deliberately out of scope for 2Prod.
@@ -1155,8 +1188,9 @@ Expected after these fixes (if all items are applied correctly):
 When the user asks to re-test (e.g., "test again", "re-run", "check again"):
 
 1. Run the exact same audit as Phase 2 against the same `url` with the same mode flags. In Local Project Mode, rebuild and restart the prod server before re-auditing.
-2. Compare results with the previous run.
-3. Output a comparison:
+2. Read the previous run's journal line. If its `skill_version` differs from the current one, **do not print gate or score deltas as if the site moved** — state which version each run used, note that a gate definition may have changed between them, and compare only the raw measurements (LCP, violation counts, overflow) which are version-independent.
+3. Compare results with the previous run.
+4. Output a comparison:
 
 ```
 ### Comparison: Before → After
