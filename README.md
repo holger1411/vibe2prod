@@ -1,5 +1,7 @@
 # vibe2prod
 
+[![skills.sh](https://skills.sh/b/holger1411/vibe2prod)](https://skills.sh/holger1411/vibe2prod)
+
 > **AI-generated sites aren't "slop" — they're drafts.** vibe2prod's job is to close the gap between draft and prod, not to shame the author. Every check has a concrete, actionable fix attached, and every fix that touches user-visible copy is proposed (not silently applied).
 
 **vibe2prod** is a Claude Code plugin that audits websites across **10 scored technical categories plus a report-only agent-readiness pass** — performance, accessibility, SEO, HTML quality, security, assets, robustness, AI-slop artifacts, responsiveness (quantitative multi-breakpoint tests), and stack freshness (live npm-registry version checks, never training knowledge) — produces a project-independent **2Prod ship verdict** (READY → BLOCKED) and a **0–100 Readiness Score**, helps you fix what it finds, and re-tests with a before/after comparison.
@@ -43,7 +45,21 @@ vibe2prod does **not** make legal claims. It does not check "is your Impressum p
 
 ## Installation
 
-vibe2prod ships as a Claude Code plugin. Install it from this repo's local marketplace:
+### Option A — skills CLI (fastest)
+
+Installs the skill straight into your agent (Claude Code, Codex, Cursor, ...):
+
+```bash
+# project-level
+npx skills add holger1411/vibe2prod
+
+# or user-level, available in every project
+npx skills add holger1411/vibe2prod -g
+```
+
+### Option B — Claude Code plugin
+
+The plugin version also registers the `/vibe2prod` slash command. Install it from this repo's local marketplace:
 
 ```bash
 # 1. Clone the repo
