@@ -114,7 +114,7 @@ Collection (Playwright, so dynamically-injected scripts are covered, not just th
 1. Load the page and capture the **rendered HTML** (`document.documentElement.outerHTML`).
 2. Collect **all inline `<script>` contents** from the DOM.
 3. Collect **all external JS** the page actually loaded: capture every `script[src]` URL via `page.on('response')` (type `script`) and read each response body.
-4. Collect **public source maps**: for each loaded script with a `//# sourceMappingURL=` comment (or a `SourceMap` header), fetch the map; if it returns 200, add its `sourcesContent` to the blob. Original source often still carries the comments and constants the minifier dropped.
+4. Collect **public source maps**: for each loaded script with a `//# sourceMappingURL=` comment (or a `SourceMap` header), fetch the map — only over http(s) and only from the script's own origin or the audited page's origin, because the page controls that URL and could point it at an internal host; if it returns 200, add its `sourcesContent` to the blob. Original source often still carries the comments and constants the minifier dropped.
 5. Concatenate (1)–(4) into one text blob and run the regex set below over it.
 
 Regex set (case-sensitive where shown). Every pattern here is a **secret** — none is legitimately client-side, so any match fails V5:

@@ -13,7 +13,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { launchChromium } from './lib/runtime.mjs';
 import {
-  AI_ENDPOINTS, EXPOSED_FILE_PATHS, findPublicSecretNames, looksLikeExposedFile, scanText, sourceMapUrl,
+  AI_ENDPOINTS, EXPOSED_FILE_PATHS, findPublicSecretNames, looksLikeExposedFile, resolveSourceMap, scanText, sourceMapUrl,
 } from './lib/secrets.mjs';
 
 const SOURCE_EXT = /\.(m?[jt]sx?|cjs|vue|svelte|astro)$/;
@@ -88,7 +88,8 @@ async function main() {
 
   for (const s of (await Promise.all(scripts)).filter(Boolean)) {
     sources.push({ source: s.url, text: s.body });
-    const mapUrl = s.sourcemap ? new URL(s.sourcemap, s.url).href : sourceMapUrl(s.body, s.url);
+    const ref = s.sourcemap ?? sourceMapUrl(s.body, s.url);
+    const mapUrl = ref ? resolveSourceMap(ref, s.url, opts.url) : null;
     if (!mapUrl) continue;
     try {
       const res = await context.request.get(mapUrl, { timeout: 15000 });

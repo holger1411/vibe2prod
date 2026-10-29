@@ -249,7 +249,7 @@ Every run writes to `.vibe2prod/` — in the audited project root (Local Project
 **Run journal (`runs.jsonl`).** Append exactly one JSON object per completed run:
 
 ```json
-{"run":"20260824-171205","url":"https://example.com","mode":"remote","skill_version":"0.9.0",
+{"run":"20260824-171205","url":"https://example.com","mode":"remote","skill_version":"0.9.1",
  "twoprod":{"band":"NOT YET","pct":74.1,"passed":20,"denominator":27,
             "failed":["S2","H1","Sec1"],"deferred":[],"inconclusive":[],"vetos_failed":[]},
  "readiness":62,

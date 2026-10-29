@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  classifyJwt, findPublicSecretNames, looksLikeExposedFile, scanText, sourceMapUrl,
+  classifyJwt, findPublicSecretNames, looksLikeExposedFile, resolveSourceMap, scanText, sourceMapUrl,
 } from '../skills/vibe2prod/scripts/lib/secrets.mjs';
 
 // Key-shaped strings are assembled at runtime so the repository never contains a literal one.
@@ -67,4 +67,13 @@ test('secret-named variables with a client-exposing prefix are found', () => {
 test('source map URLs resolve against the script URL', () => {
   assert.equal(sourceMapUrl('x()\n//# sourceMappingURL=app.js.map', 'https://s.test/assets/app.js'), 'https://s.test/assets/app.js.map');
   assert.equal(sourceMapUrl('x()\n//# sourceMappingURL=data:application/json;base64,e30=', 'https://s.test/a.js'), null);
+});
+
+test('source maps are only fetched from the script or page origin', () => {
+  const page = 'https://site.test/';
+  assert.equal(resolveSourceMap('app.js.map', 'https://cdn.test/app.js', page), 'https://cdn.test/app.js.map');
+  assert.equal(resolveSourceMap('https://site.test/m.map', 'https://cdn.test/app.js', page), 'https://site.test/m.map');
+  assert.equal(resolveSourceMap('http://169.254.169.254/latest/meta-data', 'https://cdn.test/app.js', page), null);
+  assert.equal(resolveSourceMap('file:///etc/passwd', 'https://cdn.test/app.js', page), null);
+  assert.equal(resolveSourceMap('http://[::1', 'https://cdn.test/app.js', page), null);
 });

@@ -99,6 +99,19 @@ export function findPublicSecretNames(text, source) {
   return out;
 }
 
+// The audited page controls source-map URLs, so only fetch http(s) maps from the script's
+// own origin or the audited page's origin — never an arbitrary (internal) host it points at.
+export function resolveSourceMap(ref, scriptUrl, pageUrl) {
+  try {
+    const map = new URL(ref, scriptUrl);
+    if (map.protocol !== 'http:' && map.protocol !== 'https:') return null;
+    const allowed = [new URL(scriptUrl).origin, new URL(pageUrl).origin];
+    return allowed.includes(map.origin) ? map.href : null;
+  } catch {
+    return null;
+  }
+}
+
 export function sourceMapUrl(scriptBody, scriptUrl) {
   const m = scriptBody.match(/[#@]\s*sourceMappingURL=([^\s'"]+)\s*$/m);
   if (!m || m[1].startsWith('data:')) return null;

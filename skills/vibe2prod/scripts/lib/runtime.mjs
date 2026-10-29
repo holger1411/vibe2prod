@@ -3,8 +3,8 @@
 // The skill directory has no node_modules of its own, so look in this order:
 //   1. normal resolution (the script was installed next to a node_modules)
 //   2. $VIBE2PROD_RUNTIME, default ~/.cache/vibe2prod/runtime (the documented setup)
-//   3. the current working directory (the audited project may have playwright)
-//   4. the global npm root
+//   3. the global npm root
+// Never the audited project's node_modules: that would run code from the repo under audit.
 
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
@@ -30,7 +30,7 @@ export async function loadPlaywright() {
   try {
     return await import('playwright');
   } catch {}
-  const bases = [RUNTIME_DIR, process.cwd()];
+  const bases = [RUNTIME_DIR];
   try {
     bases.push(execFileSync('npm', ['root', '-g'], { encoding: 'utf8' }).trim().replace(/node_modules$/, ''));
   } catch {}
