@@ -33,7 +33,7 @@ vibe2prod does **not** make legal claims. It does not check "is your Impressum p
 - **Dual-audience report** — every finding is rendered in four lines: traffic-light headline, plain-language impact, technical detail with metric + reference URL, and a concrete fix. Vibe-coders can stop reading after line 2; pros skip straight to lines 3–4.
 - **Impact grouping** — issues are organized by what users actually notice: Speed, Responsiveness, Findability, Security & Trust, Polish. The technical category label stays on every finding for pros.
 - **Quantitative responsiveness** — 6-breakpoint Playwright measurements (320 / 375 / 768 / 1024 / 1280 / 1920 px) produce a diff-able matrix, not a vibe. Counting checks apply shared exclusion rules (visually-hidden elements, WCAG 2.5.8 inline targets, prose-only font sizing) and always print raw-vs-filtered counts, so a filter can never be mistaken for a check that stopped working. The 1920 px ultra-wide breakpoint is report-only; the 2Prod gates stay on the canonical five.
-- **Live stack-freshness check** — queries the npm registry and nodejs.org directly. Training data is 3–9 months stale and vibe2prod refuses to fall back on it.
+- **Live stack-freshness check** — queries the npm registry and the official Node.js release schedule directly, using the exact versions from your lockfile. Training data is 3–9 months stale and vibe2prod refuses to fall back on it.
 - **AI-slop detection** — Lorem ipsum, placeholder images (`picsum.photos`, `via.placeholder.com`), broken anchors (`#`, `example.com`), fake JS navigation (`<div onClick>` instead of real links), fake testimonials, hallucinated meta tags, duplicate hero sections, and **alt-text quality** (`alt="hero-2.jpg"`, `alt="image"`, one alt reused across every image — axe and Lighthouse only check that `alt` exists, never whether it says anything).
 - **Interaction hygiene** — checks derived from Vercel's [web-interface-guidelines](https://github.com/vercel-labs/web-interface-guidelines): visible focus rings (no `outline: none` without `:focus-visible` replacement), form `autocomplete`/`type`/`inputmode`, paste blocking, `transition: all`, `theme-color` and `color-scheme`.
 - **Zoom & focus hygiene** — 200 % text zoom (WCAG 1.4.4: overflow, clipped text, overlapping controls at doubled text size — a different failure mode than a narrow viewport), focus obscured by sticky headers and cookie banners (WCAG 2.4.11), DOM-vs-visual reading-order inversions (WCAG 1.3.2), and generic or inconsistent link names (`click here`, one name on two different targets, label-in-name mismatches).
@@ -83,7 +83,7 @@ npm install -g @axe-core/cli
 npx playwright install chromium
 ```
 
-`curl` is expected to be present (it is, on macOS and most Linux distros).
+Lighthouse 13 needs **Node ≥ 22.19**. `curl` and `jq` are expected to be present (`curl` ships with macOS and most Linux distros; `jq` via `brew install jq` / `apt install jq`).
 
 Optional: set `PAGESPEED_API_KEY` to also run PageSpeed Insights against public URLs.
 
@@ -103,8 +103,8 @@ export PAGESPEED_API_KEY="your_key_here"
 
 Run `/vibe2prod` with no URL inside any project directory. vibe2prod will:
 
-1. Detect the framework from your `package.json` (or serve static HTML if there's no build step).
-2. Run the **production** build (`npm run build`).
+1. Detect the framework from your `package.json` (or serve static HTML if there's no build step) and the package manager from your lockfile (npm, pnpm, yarn, bun).
+2. Run the **production** build (`npm run build` or the pnpm/yarn/bun equivalent).
 3. Start the prod server (`npm run preview`, `npm start`, or `npx serve`) on a free port.
 4. Audit against that local prod URL.
 5. Shut the server down when the audit finishes.
@@ -196,7 +196,7 @@ Then run it again to see the diff:
 7. **Robustness** (weight 7) — console errors, compression (gzip/brotli), caching headers, `prefers-reduced-motion`, `prefers-color-scheme`, viewport meta, custom 404, noscript fallback, plus interaction hygiene (visible focus rings, form `autocomplete`/`type`/`inputmode`, paste blocking, `transition: all`, `color-scheme`), readability hygiene (centered long-form text, justified text without hyphenation), and zoom & focus hygiene (200 % text zoom per WCAG 1.4.4, focus obscured per WCAG 2.4.11, reading order per WCAG 1.3.2, generic and inconsistent link names per WCAG 2.4.4 / 2.5.3).
 8. **Assets** (weight 5) — image formats (WebP/AVIF), responsive `srcset`, font loading, fake bold/italic detection, font-family sprawl, favicons, manifest, `theme-color`, broken links.
 9. **HTML Quality** (weight 3) — W3C Nu Validator, with its messages split into HTML errors, CSS vocabulary complaints, and other CSS messages. Only genuine HTML errors gate: the validator's CSS property database lags shipped browser CSS, and a page using a modern property should not fail an *HTML* validity gate for it.
-10. **Stack Freshness** (weight 2) — live version check against the npm registry (never training knowledge). Detects outdated meta-frameworks, base frameworks, styling libs, build tools, TypeScript, and Node runtime against the current LTS schedule. Migration-guide URLs are fetched live via Context7.
+10. **Stack Freshness** (weight 2) — live version check against the npm registry (never training knowledge). Detects outdated meta-frameworks, base frameworks, styling libs, build tools, TypeScript, and Node runtime against the current LTS schedule. Installed versions come from the lockfile, not the `package.json` range; Node support is checked against the official release schedule. Migration-guide URLs are fetched live via a docs MCP such as Context7.
 
 11. **Agent Readiness** (report-only, weight 0) — how legible the site is to assistant browsing, LLM answer engines, and MCP-driven automation: `llms.txt` presence and well-formedness, content present without JavaScript, agent-recoverable 404 pages, identity JSON-LD completeness, Markdown content negotiation, WebMCP annotations. Plus a neutral, never-scored note on which AI crawlers `robots.txt` disallows — blocking them is a business decision, not a defect.
 
@@ -208,7 +208,7 @@ Weights sum to 100 → the Readiness Score. Stack Freshness runs in local-projec
 
 **Plain language plus technical rigor, not one or the other.** The report serves both a vibe-coder and a senior developer. A single finding carries the headline for the former, the measurement and reference for the latter, and a concrete fix for both.
 
-**Live lookups over training data.** vibe2prod never answers "is this framework version current" from memory. It queries the npm registry and nodejs.org on every run. If the network is down, it says so — it does not guess.
+**Live lookups over training data.** vibe2prod never answers "is this framework version current" from memory. It queries the npm registry and the Node.js release schedule on every run. If the network is down, it says so — it does not guess.
 
 **No aggressive compression.** Some tools happily recommend cranking JPEG quality to 60 %. vibe2prod won't go below 85 % and defaults to 90 %. The real wins are format (WebP/AVIF), responsive `srcset`, and correct loading priority — not quality reduction.
 
