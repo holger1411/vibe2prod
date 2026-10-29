@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vite + React + TS</title>
+  <link rel="icon" href="/vite.svg">
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+    .hero-strip { width: 360px; background: #eef; padding: 8px; }
+    nav a { display: inline-block; padding: 14px; }
+    @media (min-width: 768px) { .hero-strip { width: auto; } }
+  </style>
+</head>
+<body>
+  <a class="sr-only" href="#main">Skip to content</a>
+  <nav><a href="/">Home</a><a href="https://example.com/pricing">Pricing</a></nav>
+  <main id="main">
+    <div class="hero-strip">Fixed-width strip that overflows a 320 px phone</div>
+    <h1>Build faster</h1>
+    <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Our platform helps teams ship faster with fewer bugs and less waiting, read the <a href="/docs">docs</a> to learn more about it today.</p>
+    <img src="/placeholder.svg" alt="image">
+  </main>
+  <script>
+    // Supabase client config as AI builders emit it: the anon key is public by design.
+    window.SUPABASE_URL = 'https://fixtureproject.supabase.co';
+    window.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZpeHR1cmVwcm9qZWN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjAwMDAwMDAwMH0.Zml4dHVyZS1zaWduYXR1cmUtbm90LXJlYWw';
+  </script>
+</body>
+</html>

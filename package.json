@@ -1,6 +1,6 @@
 {
   "name": "vibe2prod",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "type": "module",
   "description": "Claude Code plugin that audits AI-generated websites for production readiness, computes a project-independent 2Prod ship verdict, and helps fix issues iteratively.",
   "keywords": [
@@ -25,5 +25,12 @@
   },
   "bugs": {
     "url": "https://github.com/holger1411/vibe2prod/issues"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "eval": "claude plugin eval . --scaffold --trust-plugin --ablation none --allow-tools Bash"
+  },
+  "engines": {
+    "node": ">=22.19"
   }
 }

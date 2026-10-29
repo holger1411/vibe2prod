@@ -29,6 +29,7 @@ vibe2prod does **not** make legal claims. It does not check "is your Impressum p
 - **Dual mode** — audit a live URL or your local project. In local mode, vibe2prod builds your project in prod mode, starts the prod server locally (never the dev server, because dev bundles produce misleading Lighthouse scores), audits, and cleans up.
 - **Framework-aware local builds** — Vite, Next.js, Astro, SvelteKit, Nuxt, Remix, and plain static HTML all handled out of the box.
 - **Readiness Score (0–100)** — a nuanced second headline, weighted across the 10 scored categories, each with a fixed, published check list so the same site always gets the same score. Each finding shows how many points fixing it is worth.
+- **Measured by code where it matters** — the checks that decide a gate and are easy to get subtly wrong (multi-breakpoint responsiveness with the WCAG 2.5.8 exceptions, the leaked-secret scan) and the 2Prod/Readiness arithmetic itself run as bundled, tested scripts instead of improvised code, so the same site gets the same verdict.
 - **Reproducible Performance** — Lighthouse runs 3× per audit, median feeds both 2Prod gates and the Readiness Score. No more ±5-point jitter between runs.
 - **Dual-audience report** — every finding is rendered in four lines: traffic-light headline, plain-language impact, technical detail with metric + reference URL, and a concrete fix. Vibe-coders can stop reading after line 2; pros skip straight to lines 3–4.
 - **Impact grouping** — issues are organized by what users actually notice: Speed, Responsiveness, Findability, Security & Trust, Polish. The technical category label stays on every finding for pros.
@@ -80,8 +81,13 @@ vibe2prod shells out to a few tools. Install whichever you don't already have:
 ```bash
 npm install -g lighthouse
 npm install -g @axe-core/cli
-npx playwright install chromium
+
+# runtime for vibe2prod's bundled measurement scripts (Playwright + Chromium)
+npm install --prefix ~/.cache/vibe2prod/runtime playwright @axe-core/playwright
+~/.cache/vibe2prod/runtime/node_modules/.bin/playwright install chromium
 ```
+
+The runtime lives outside the skill folder so plugin updates don't wipe it; set `VIBE2PROD_RUNTIME` to put it elsewhere. vibe2prod checks it on every run and tells you exactly what's missing.
 
 Lighthouse 13 needs **Node ≥ 22.19**. `curl` and `jq` are expected to be present (`curl` ships with macOS and most Linux distros; `jq` via `brew install jq` / `apt install jq`).
 
@@ -213,6 +219,17 @@ Weights sum to 100 → the Readiness Score. Stack Freshness runs in local-projec
 **No aggressive compression.** Some tools happily recommend cranking JPEG quality to 60 %. vibe2prod won't go below 85 % and defaults to 90 %. The real wins are format (WebP/AVIF), responsive `srcset`, and correct loading priority — not quality reduction.
 
 **Auto-detect over configuration.** vibe2prod tries hard to do the right thing without flags — detecting your framework, your server port, your stack. Flags exist for when it gets it wrong, or when you want a different mode (`--ship`, `--export`, `--pro`).
+
+## Development
+
+```bash
+npm test      # unit tests for the scoring/secret/tap-target logic + integration tests against evals/fixtures/
+npm run eval  # claude plugin eval: skill triggering (EN/DE), no false triggers, no fabricated verdicts
+```
+
+The integration tests need the script runtime above and skip without it. The eval sandbox cannot run `node` or Lighthouse, so the evals test the model's behavior and `npm test` tests the measurements.
+
+Layout: `skills/vibe2prod/SKILL.md` is the core (flow, gates, scoring); `references/` holds one file per audit category plus the report, fix, and fix-me.md templates; `scripts/` holds the measurement scripts and the gate calculator.
 
 ## Contributing
 

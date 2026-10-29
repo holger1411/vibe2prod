@@ -3,7 +3,7 @@ name: vibe2prod
 description: Production-readiness auditor for AI-generated websites (Lovable, v0, Bolt, Cursor, Claude Code). Audits a live URL or the local project across performance, accessibility, SEO, HTML, security, assets, robustness, AI-slop artifacts (placeholder copy and images, fake testimonials, hallucinated meta tags, weak alt text), multi-breakpoint responsiveness, live stack freshness, and report-only agent readiness. Returns a project-independent 2Prod verdict (READY / NOT YET / BLOCKED) and a 0–100 Readiness Score, then fixes issues interactively or exports a fix-me.md handoff brief for other coding agents. Use for "/vibe2prod", "/vibe2prod <url>", "audit this website", "make this site production ready", "is this site ready to ship", "ist meine Seite bereit für den Launch", "prüf meine Website".
 user-invocable: true
 argument-hint: "[url] [--ship] [--export] [--pro]"
-allowed-tools: Bash(lighthouse *) Bash(npx playwright *) Bash(npx @axe-core/cli *) Bash(jq *)
+allowed-tools: Bash(lighthouse *) Bash(npx @axe-core/cli *) Bash(jq *) Bash(node ${CLAUDE_SKILL_DIR}/scripts/*)
 ---
 
 # vibe2prod
@@ -76,7 +76,7 @@ Professional-dev use case for `--ship`: quick "get me the boring wins out of the
 
 ### `--export` (handoff brief)
 
-Emit `fix-me.md` alongside whatever else the mode does. `fix-me.md` is an ordered, copy-paste-ready brief for another coding agent (Cursor, Lovable, v0, a junior developer, future-you). See the **fix-me.md Template** section for the exact structure. `--export` does not change the audit or fixing behavior — it only ensures the file is written.
+Emit `fix-me.md` alongside whatever else the mode does. `fix-me.md` is an ordered, copy-paste-ready brief for another coding agent (Cursor, Lovable, v0, a junior developer, future-you). See [references/fix-me-template.md](references/fix-me-template.md) for the exact structure. `--export` does not change the audit or fixing behavior — it only ensures the file is written.
 
 ### `--pro`
 
@@ -98,14 +98,15 @@ lighthouse --version
 npx @axe-core/cli --version
 curl --version
 jq --version
-npx playwright --version
+node ${CLAUDE_SKILL_DIR}/scripts/check-runtime.mjs
 ```
 
 For any missing tool, show the install command and ask the user to install it before continuing:
 
 - Lighthouse: `npm install -g lighthouse`
 - axe-core: `npm install -g @axe-core/cli`
-- Playwright: `npx playwright install chromium`
+- Script runtime (Playwright + Chromium for the bundled scripts — `check-runtime.mjs` exits 3 and prints these when it is missing):
+  `npm install --prefix ~/.cache/vibe2prod/runtime playwright @axe-core/playwright` then `~/.cache/vibe2prod/runtime/node_modules/.bin/playwright install chromium`. Set `VIBE2PROD_RUNTIME` to use another directory.
 - jq: `brew install jq` / `apt install jq`
 - curl: pre-installed on macOS/Linux
 
@@ -193,628 +194,38 @@ These elements are *supposed* to be clipped and undersized; that is how the patt
 
 **2. Report what the filter removed.** Whenever a filter drops elements from a count, put both numbers in the technical line — `2 raw → 0 after WCAG exclusions (1 × .sr-only skip link, 1 × inline link in a sentence)`. A silent filter is indistinguishable from a check that quietly stopped working, and the reader cannot audit what they cannot see.
 
-### Category 1: Performance
-
-Run Lighthouse **3 times** and take the **median** per metric. Single-run perf scores jitter ±5–10 points between runs from network and CPU variance — the median is what makes the 2Prod gates and the Readiness Score reproducible. The median values feed both.
-
-Median, not mean: a single timed-out or crashed run poisons the mean; the median is robust to one bad outlier.
-
-```bash
-for i in 1 2 3; do
-  lighthouse "$url" --output=json --output-path=./lh-perf-$i.json --only-categories=performance --chrome-flags="--headless --no-sandbox" --quiet
-done
-```
-
-**Retry policy:** for each of the 3 runs, the result must include all four required values:
-- `categories.performance.score` (a number, not null)
-- `audits["largest-contentful-paint"].numericValue`
-- `audits["cumulative-layout-shift"].numericValue`
-- `audits["total-blocking-time"].numericValue`
-
-If a run produces a non-zero exit code, times out, or yields a JSON missing any of these fields, **retry that single run up to 2 additional times**. If after 3 attempts a run still fails, the entire Performance category in 2Prod is **hard-failed** (P1, P2, P3, P4 all counted as fails in the gate count). Do not silently fall back to fewer runs — that would hide instability and break project-independence.
-
-Then take the **median** of each metric across the 3 successful runs:
-- median `categories.performance.score`
-- median LCP (ms)
-- median CLS
-- median TBT (ms)
-
-Persist the medians to `./lh-perf-median.json` and treat that as the canonical Performance result everywhere downstream. In Phase 3, this median file is moved into `.vibe2prod/artifacts/<run>/` as a durable artifact; the three raw per-run files (`lh-perf-1/2/3.json`) are scratch and are cleaned up after the medians are computed.
-
-If `PAGESPEED_API_KEY` is set and `url` is public (not localhost):
-```bash
-curl -s "https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=$url&key=$PAGESPEED_API_KEY&category=performance&strategy=mobile" -o psi-report.json
-```
-
-Extract and report:
-- **Scores**: Performance score (0–100, median of 3 runs)
-- **Core Web Vitals**: LCP (target < 2.5s), INP (target < 200ms — PSI/CrUX only, not measurable in lab), CLS (target < 0.1)
-- **Other metrics**: TTFB, FCP, TBT
-- **Issues**: Render-blocking resources, unoptimized images, unused CSS/JS, missing compression. Lighthouse 13 replaced most of the classic opportunity audits with *insight* audits (`render-blocking-insight`, `image-delivery-insight`, `document-latency-insight`, `lcp-discovery-insight`, …) and removed the old IDs from the JSON. Do not look up audits by a hard-coded ID list — take every audit in the `performance` category's `auditRefs` whose `score` is a number below 0.9, and report it by its own `title` and `id`.
-
-**Cost**: triple-run perf adds ~2–4 minutes to the audit (more if retries trigger). This is intentional — the cost buys reproducibility. Do not skip the multi-run.
-
-### Category 2: Accessibility
-
-Run axe-core and Lighthouse accessibility audit:
-
-```bash
-lighthouse "$url" --output=json --output-path=./lh-a11y.json --only-categories=accessibility --chrome-flags="--headless --no-sandbox"
-npx @axe-core/cli "$url" --save axe-report.json --dir . --exit
-```
-
-`@axe-core/cli` drives Chrome through ChromeDriver and breaks whenever the two versions drift apart (`session not created: This version of ChromeDriver only supports …`). If that happens, do not mark A1/A2 INCONCLUSIVE — run axe inside the Playwright session instead (`@axe-core/playwright`, `new AxeBuilder({ page }).analyze()`) and save the result to the same `axe-report.json`. Only if both paths fail are A1/A2 INCONCLUSIVE.
-
-Extract and report:
-- **Score**: Lighthouse accessibility score (0–100)
-- **Issues**: Color contrast failures, missing alt texts, missing form labels, heading hierarchy violations, missing ARIA attributes, keyboard navigation issues, touch target sizes (WCAG 2.5.8 AA: 24 × 24 px; the 44 × 44 px AAA level is measured in Cat 9), focus management problems
-
-### Category 3: SEO & Meta
-
-Run Lighthouse SEO audit and parse the HTML directly:
-
-```bash
-lighthouse "$url" --output=json --output-path=./lh-seo.json --only-categories=seo --chrome-flags="--headless --no-sandbox"
-curl -sL "$url" -o page.html
-```
-
-Parse `page.html` and check for:
-- **Title tag**: present, reasonable length (30–60 chars)
-- **Meta description**: present, 50–160 chars (gate S2). 50–119 chars passes the gate but is reported **LOW** — search engines show ~120–160 chars, so a shorter description wastes snippet space
-- **OG tags**: `og:title`, `og:description`, `og:image`, `og:url`, `og:type` — all present?
-- **Twitter Cards**: `twitter:card`, `twitter:title`, `twitter:image` — all present?
-- **Canonical URL**: `<link rel="canonical">` present?
-- **Structured data**: Any JSON-LD / Schema.org markup?
-- **`lang` attribute**: Set on `<html>` tag?
-- **Sitemap**: Fetch `<url>/sitemap.xml` — exists and returns 200?
-- **Robots.txt**: Fetch `<url>/robots.txt` — exists and returns 200?
-
-### Category 4: HTML Quality
-
-Validate HTML via W3C Nu Validator (skip if `url` is localhost — the validator can't reach it; instead pipe the local HTML):
-
-```bash
-# For remote URLs:
-curl -s -H "Content-Type: text/html; charset=utf-8" --data-binary @page.html "https://validator.w3.org/nu/?out=json" -o w3c-report.json
-```
-
-**Split the messages before counting.** The Nu Validator bundles a CSS checker alongside the HTML parser, and its CSS property database lags shipped browser CSS by a long way — a page using a modern property can collect dozens of `error`-typed messages while its HTML is flawless. Sort every message into one of three buckets by its `message` string:
-
-1. **HTML errors** — `type == "error"` and the message does **not** start with `CSS:`. This is the bucket gate **H1** counts, and the only one that can fail it. HTML validity is what H1 claims to measure; CSS validity never was.
-2. **CSS vocabulary messages** — message starts with `CSS:` and matches an unknown-vocabulary complaint: `Property “…” doesn't exist`, `Unknown pseudo-element or pseudo-class`, `Unknown at-rule`. These are almost always validator lag rather than a defect. Report them as a single **informational** line with the count and the distinct property/selector names, never as a finding and never with a severity.
-3. **Other CSS messages** — anything else starting with `CSS:` (parse errors, malformed values). Report as **LOW**: the browser drops the offending declaration, so it is a tidiness issue, not a ship blocker.
-
-Never collapse buckets 2 and 3 into "31 errors". Print the split. A reader who sees `0 HTML errors · 31 CSS vocabulary messages (view-transition-name)` knows immediately that nothing is wrong with the page; a reader who sees `31 errors` goes looking for a defect that does not exist.
-
-Extract and report:
-- **HTML errors**: count and list (bucket 1)
-- **CSS messages**: the bucket 2 count with distinct names, and the bucket 3 list
-- **Warnings**: count and list `type != "error"` messages
-- **Semantic issues**: Missing landmarks, incorrect heading nesting
-
-### Category 5: Security
-
-Check response headers and page content:
-
-```bash
-curl -sIL "$url" -o headers.txt
-```
-
-Parse `headers.txt` and check for:
-- **HTTPS**: Is the URL using HTTPS? If HTTP (and not localhost), is there a redirect to HTTPS?
-- **Security headers** (check presence and reasonable values):
-  - `Strict-Transport-Security` (HSTS)
-  - `Content-Security-Policy` (CSP)
-  - `X-Frame-Options`
-  - `X-Content-Type-Options` (should be `nosniff`)
-  - `Referrer-Policy`
-  - `Permissions-Policy`
-- **Cookie flags**: Any `Set-Cookie` headers should include `Secure`, `HttpOnly`, `SameSite`
-- **Mixed content**: Scan `page.html` for any `http://` references to scripts, stylesheets, images, iframes
-- **Public source maps**: from the Cat 8.5 collection — loaded scripts whose source map returns 200. Severity **LOW**.
-
-Note: For local prod servers, security headers should still be reported as "missing" — they need to be configured at the hosting layer (Vercel, Netlify, Nginx, etc.) before ship.
-
-### Category 6: Assets
-
-Analyze assets from `page.html` and the page load:
-
-- **Image formats**: Find all `<img>` tags. Check `src` file extensions. Flag any PNG/JPG/GIF that could be WebP/AVIF.
-- **Responsive images**: Check if `<img>` tags have `srcset` and `sizes` attributes. Flag large images without responsive variants.
-- **Image optimization rule**: When suggesting image optimization, NEVER recommend compressing below 85% quality. Default recommendation is 90% quality. The real wins come from: correct format (WebP/AVIF), correct sizes per device (srcset), and correct loading priority. Do not suggest aggressive quality reduction.
-- **Broken links**: Extract all `<a href>` links (internal and external). Fetch each with `curl -sI` and check for non-200 status codes. Limit to 50 links max to avoid rate limiting.
-- **Font loading**: Check for `<link rel="preload" as="font">` and `font-display: swap` in stylesheets.
-- **Favicon**: Check for `<link rel="icon">` or `/favicon.ico`.
-- **Apple Touch Icons**: Check for `<link rel="apple-touch-icon">`.
-- **Web App Manifest**: Check for `<link rel="manifest">` and fetch the manifest file.
-- **Theme color**: Check for `<meta name="theme-color">`. Missing → **LOW** (browser UI won't match the page background on mobile).
-- **Fake bold / fake italic**: With Playwright, enumerate the actually-loaded font faces (`document.fonts`: family, weight, style) and diff them against the `font-weight`/`font-style` values that computed styles request on text nodes. A requested weight/style with no matching loaded face means the browser synthesizes it (faux bold/italic) — classic when a Google Font is loaded only at 400 but the CSS uses 600/700. Severity **MEDIUM**. Auto-fix: add the missing weights/styles to the font loading (Google Fonts URL or `@font-face`) — strictly better than synthesis.
-- **Font-family sprawl**: Count distinct rendered text font families across all text nodes (monospace for code blocks excluded). More than 2 → **LOW**; more than 3 → **MEDIUM**. Each extra family costs font downloads, and uncoordinated families usually signal stitched-together AI output rather than a type system.
-
-### Category 7: Robustness
-
-Use Playwright for runtime checks and curl for headers:
-
-- **Console errors**: Load the page with Playwright, capture any console errors or warnings during load.
-- **Compression**: Check response headers for `Content-Encoding: gzip` or `Content-Encoding: br`.
-- **Caching headers**: Check for `Cache-Control` and `ETag` headers on static assets (JS, CSS, images).
-- **`prefers-reduced-motion`**: Search CSS files for `@media (prefers-reduced-motion`.
-- **`prefers-color-scheme`**: Search CSS files for `@media (prefers-color-scheme`.
-- **Viewport meta**: Check for `<meta name="viewport">` with reasonable content.
-- **404 page**: Fetch `<url>/this-page-does-not-exist-404-test` and check if it returns a custom 404 (not the default server error).
-- **noscript fallback**: Check for `<noscript>` tag presence.
-
-**Interaction hygiene** (derived from Vercel's web-interface-guidelines; every check is a measurement — DOM/CSS scan via Playwright on the rendered page, plus a source grep in Local Project Mode):
-
-- **Focus visibility**: Scan all stylesheets — and `class` attributes for Tailwind's `outline-none` / `focus:outline-none` — for `outline: none` / `outline: 0` on `:focus`, `*`, or interactive selectors **without** a `:focus-visible` (or equivalent) replacement rule. Keyboard users lose the focus ring entirely. Severity **HIGH** (WCAG 2.4.7). Neither axe-core nor Lighthouse reliably flags this — do not skip it as already covered.
-- **Form autocomplete & input types**: For each `<input>`: flag missing `autocomplete` where `name`/`label`/`placeholder` clearly indicates email, name, tel, or address; flag `type="text"` where the field is clearly email/tel/url/number; flag missing `inputmode` on numeric-entry fields. Severity **MEDIUM** (WCAG 1.3.5 — axe validates `autocomplete` *values* but not their *presence*).
-- **Paste blocking**: Only when the page has text inputs — use Playwright to paste a probe string into each and verify the value arrives; in Local Project Mode also grep the source for paste handlers calling `preventDefault`. Blocking paste breaks password managers and 2FA codes. Severity **MEDIUM**.
-- **`transition: all`**: Scan stylesheets for `transition: all` / `transition-property: all` and the DOM for Tailwind's `transition-all` class. Animating `all` includes layout-affecting properties and causes jank; AI builders emit it reflexively. Severity **LOW**.
-- **`color-scheme`**: If the site styles a dark theme (a `prefers-color-scheme: dark` media query exists, or the page defaults to a dark background), check that `color-scheme` is set on `<html>` (CSS property or `<meta name="color-scheme">`) so scrollbars and native form controls render in matching colors. Severity **LOW**.
-
-**Readability hygiene** (same measurement discipline; viewport-independent, so it lives here and not in the Cat 9 breakpoint matrix):
-
-- **Centered long-form text**: Flag multi-line body paragraphs (> ~40 words) with computed `text-align: center`. Centering long text makes every line start at a different x-position and is measurably harder to read — and it's a characteristic AI-layout default. Severity **LOW** (**MEDIUM** when it affects the majority of body paragraphs).
-- **Justified text without hyphenation**: Flag `text-align: justify` on body text without `hyphens: auto` (or soft hyphens) — produces rivers of white space, especially on narrow viewports. Severity **LOW**. Auto-fix: add `hyphens: auto` (requires a correct `lang` attribute — see gate A3).
-
-**Zoom & focus hygiene** (same measurement discipline; runs inside the existing Playwright round at the xl viewport, so it costs no extra page load):
-
-- **Text zoom 200 %** (WCAG 1.4.4 Resize Text): at 1280 × 800, set `document.documentElement.style.fontSize = '32px'` (2× the 16 px browser default), wait one animation frame, then measure (a) `documentElement.scrollWidth > clientWidth`, (b) the count of elements with `overflow: hidden`/`clip` whose `scrollHeight > clientHeight + 4` or `scrollWidth > clientWidth + 4` (text clipped away instead of reflowing) — applying the **visually-hidden** rule from *Shared measurement rules*, and counting only elements that actually contain text, so `.sr-only` containers and decorative background layers do not register as clipped content, (c) the count of interactive elements whose bounding boxes now overlap. Reset the font-size afterwards. Severity **HIGH** for (a), **MEDIUM** for (b) and (c). This is deliberately **not** a Cat 9 breakpoint: Cat 9 varies viewport *width*, this varies text *size* at a fixed width, and the two break different layouts. Gates Resp1/Resp2 are unaffected.
-- **Focus obscured** (WCAG 2.4.11, AA in WCAG 2.2): Tab through the first 60 focusable elements. For each, take the focused element's bounding box and call `document.elementFromPoint()` at its center and at the midpoint of its top edge; if the returned node is neither the focused element nor one of its ancestors/descendants, the focus ring is covered — almost always by a sticky header, a cookie banner, or a fixed chat widget. Report each obscured selector together with the covering element. Severity **HIGH**. The focus-*visibility* check above asks whether a ring is drawn at all; this one asks whether you can see it.
-- **Reading order** (WCAG 1.3.2 Meaningful Sequence): collect all focusable elements plus headings in DOM order with their bounding boxes. Sort a copy visually (top, then left, with a 12 px row tolerance so items on one line keep reading order). Count the positions where the two sequences disagree by more than one row band — those are the elements a screen-reader or keyboard user meets in a different order than a sighted visitor. Report the inversion count plus the first 5 offending selectors. Usual cause: CSS `order`, `row-reverse`/`column-reverse`, or absolute positioning used for layout. Severity **MEDIUM**.
-- **Generic and inconsistent link names** (WCAG 2.4.4 / 2.5.3): compute each link's accessible name (`aria-label` → `aria-labelledby` → text content → `title` → nested `img[alt]`) and flag three things. (a) A name that is exactly one of `click here`, `here`, `read more`, `learn more`, `more`, `link`, `this`, `details`, `download`, `→` — out of context it says nothing, and screen-reader users navigate by link list. (b) Two or more links sharing one accessible name but pointing at different `href` values. (c) **Label-in-Name**: the link's visible text is not contained in its accessible name — typically an `aria-label` overriding the visible label, which breaks voice control, because the user says what they read and nothing matches. Severity **MEDIUM** each.
-
-Interaction-hygiene, readability, and zoom/focus findings are scored here in Cat 7 (Method B), never in Cat 2 — same double-count rule as the Cat 9 tap-targets: Cat 2's score is Lighthouse-direct, and these checks measure what Lighthouse doesn't.
-
-### Category 8: AI-Slop Detection (vibe2prod-specific)
-
-This is where vibe2prod goes beyond a generic audit. AI-assisted builders (Lovable, v0, Bolt, Cursor, Claude Code, etc.) produce characteristic artifacts that slip into prod if nobody reviews the full text and DOM. These checks catch them.
-
-Extract `textContent` from `page.html` (strip tags), the full HTML, and — for local project mode — also scan the source tree for obvious leftovers.
-
-**8.1 Placeholder content**
-
-Flag occurrences (case-insensitive, word-boundary) of:
-- `Lorem ipsum`, `dolor sit amet`, `consectetur adipiscing`
-- `Your text here`, `Your heading here`, `Your title here`
-- `Placeholder`, `[placeholder]`, `[...]`, `<placeholder>`
-- `TODO`, `FIXME`, `XXX:` (visible in rendered text, not in code comments)
-- `Coming soon`, `Content coming soon`, `Under construction`
-- `Example Company`, `Company Name`, `Your Company`, `Acme Corp` (unless the site is actually for Acme)
-- Triple-dot hanging sentences in headlines (`"We believe in…"` with no follow-up)
-- Repeated identical paragraphs under different headings
-
-Severity: **HIGH** if in a headline, hero, or primary CTA. **MEDIUM** elsewhere.
-
-**8.2 Broken anchors, placeholder URLs & fake navigation**
-
-Parse all `<a href>` values. Flag:
-- `href="#"` with no JavaScript handler attached (dead links)
-- Anchor links (`href="#something"`) where the `#something` ID does not exist anywhere in the page
-- URLs containing `example.com`, `example.org`, `yoursite.com`, `yourdomain.com`, `yourcompany.com`
-- `localhost`, `127.0.0.1`, `0.0.0.0` in any `href` or `src` outside of dev files
-- `mailto:` with `example@example.com`, `you@yoursite.com`, `name@company.com`
-- `tel:` with `+1 555 555 5555` or `+49 123 4567890` (classic AI-placeholder phone numbers)
-
-Severity: **HIGH** for visible dead/placeholder CTAs, **MEDIUM** for footer/secondary links.
-
-**Fake navigation ("links are links")**: flag elements that navigate via JavaScript instead of a real link — `<div>`/`<span>`/`<button>` whose click handler sets `location` or calls a router, or any element with computed `cursor: pointer` plus a click listener and no `href`. This is a characteristic AI-builder artifact, and it breaks Cmd/Ctrl+click, middle-click, "open in new tab", and crawler link discovery. Detect via Playwright (computed style, attached listeners, missing `href`); in Local Project Mode additionally grep the source for `onClick`-navigation patterns. Severity: **HIGH** for primary nav and CTAs, **MEDIUM** elsewhere. **Not part of the AI2 gate** — AI2 counts only placeholder-URL matches in `href`/`src` values; fake-navigation findings affect the Readiness Score only.
-
-**8.3 Placeholder images & fake social proof**
-
-Scan `<img>` sources and surrounding markup. Flag:
-- Image URLs from placeholder services: `via.placeholder.com`, `placehold.co`, `placekitten.com`, `picsum.photos`, `baconmockup.com`, `loremflickr.com`
-- `<img>` tags with empty `src=""`, `src="#"`, or `src="/images/image.jpg"`-style dummy paths
-- Builder-bundled placeholder assets: a path whose basename is `placeholder.svg`, or matches `placeholder-(user|logo|image)?.*\.(svg|png|jpe?g|webp)` (v0 and shadcn templates ship these), and the create-next-app template images `/next.svg`, `/vercel.svg`, `/file.svg`, `/window.svg`, `/globe.svg` rendered as page content
-- The same image URL used 3+ times on the same page (often indicates AI fell back to one stock image)
-- Stock-logo walls without link targets: a row of grayscale company logos where none of them is wrapped in an `<a href>` to a case study or press mention
-- "As seen in X" / "Featured in Y" / "Trusted by Z" sections with no verifiable source links
-- Testimonial blocks where all author names match generic patterns (`John Doe`, `Jane Smith`, `Sarah Johnson`, `Michael Brown`, `CEO at Company`, `Marketing Manager at Example Corp`)
-- 5+ testimonials with identical structure (same word count, same star count, same sentiment)
-
-Severity: **HIGH** for visible placeholder images or fake testimonials on landing pages, **MEDIUM** for stock-logo walls without attribution.
-
-**Alt-text quality** (presence is not the check — axe-core and Lighthouse only verify that `alt` *exists*; a wrong `alt` is invisible to both, and a wrong `alt` is exactly what an image-blind generator produces):
-
-For every `<img>` with a non-empty `alt`, flag:
-- `alt` that is or contains a **file name** — matches `\.(jpe?g|png|webp|avif|gif|svg)$`, or patterns like `IMG_1234`, `DSC_0042`, `screenshot-2026-01-14`, `photo (3)`, a bare hash/UUID, or a kebab/snake-case token identical to the `src` basename
-- `alt` that is a **generic label** — exactly (case-insensitive, trimmed) one of `image`, `img`, `photo`, `picture`, `graphic`, `icon`, `logo`, `banner`, `illustration`, `alt`, `alt text`, `description`, `placeholder`
-- the **same non-empty `alt` on 3 or more different `src` values** on one page — one alt written once and reused by a templating loop
-- `alt` starting with `image of`, `picture of`, `photo of`, `graphic of` — the screen reader already announces the role, so the prefix is read twice
-- `alt` byte-identical to the immediately adjacent visible text (its `<figcaption>`, the link text wrapping it, or the heading right after it) — the same sentence is announced twice
-
-Severity: **MEDIUM** for filename and generic-label alts (the image carries no information at all for a screen-reader user), **LOW** for the redundant-prefix and duplicate-adjacent-text cases (understandable, just noisy).
-
-These findings are scored in **Cat 8 (Method B)**, never in Cat 2 — same double-count rule as the Cat 9 tap-targets and the Cat 7 interaction hygiene. They are also **not part of gate AI3**: AI3 counts placeholder *image sources* only, and the gate set is fixed at 5 vetos + 27 regular gates.
-
-Auto-fix: a filename or generic-label `alt` may be **rewritten automatically** from the image's own context (surrounding heading, caption, link target, file path) — same reasoning as the missing-`alt` exception, the result is strictly better than what is there. Every other alt rewrite is a content change: propose the diff and wait for approval.
-
-**8.4 Hallucinated meta tags, builder leftovers & duplicate sections**
-
-Meta-tag hallucinations:
-- `og:image` URL that returns non-200 when fetched
-- `og:url` that doesn't match the page's actual host
-- Duplicate `<link rel="canonical">` tags, or canonical pointing to a different domain than the page is served from
-- `title` or `meta[name="description"]` containing `Your Company Name`, `Your Product`, `My Awesome Site`, `Website Title`
-- Multiple conflicting structured-data blocks (e.g., two `Organization` JSON-LD blocks with different names)
-
-Scaffold and builder defaults that survived into production (the template's metadata, never replaced with the site's own). Match `title`, `meta[name=description]`, `meta[name=author]`, `meta[name=generator]`, and `og:image` against:
-- Titles: `Vite + React + TS`, `Vite + React`, `Vite + Vue`, `Vite + Svelte`, `Vite App`, `React App`, `Create Next App`, `v0 App`
-- Descriptions: `Generated by create next app`, `Created with v0`, `Lovable Generated Project`, `Web site created using create-react-app`
-- `meta[name=author]` of `Lovable`, an `og:image` / `twitter:image` hosted on `lovable.dev`
-- Favicon still pointing at `/vite.svg`
-
-Severity: **HIGH** for a default `title` or `description` (it is what search results and browser tabs show), **MEDIUM** for author/generator/og:image defaults, **LOW** for the default favicon.
-
-Builder residue in the rendered DOM (Playwright) and the raw HTML:
-- Editor tagging attributes in production markup: `data-lov-id`, `data-lov-name`, `data-component-path`, `data-component-name` — they bloat the DOM and leak source paths
-- Builder runtime scripts left in `index.html`: `cdn.gpteng.co/gptengineer.js` and similar editor bridges
-- Visible builder badges — a fixed-position element linking to `lovable.dev`, `bolt.new`, `v0.app`/`v0.dev`, `base44.com`, `replit.com` with text like "Edit with", "Made with", "Built with"
-
-Severity: **LOW** each. A badge can be intentional (free plans, or a deliberate credit) — phrase it as "remove if not intended", never as a defect claim.
-
-Duplicate sections (uses Playwright to read the rendered DOM):
-- Two or more `<section>` blocks whose visible text is ≥80% identical
-- Multiple hero-style sections (large heading + CTA) above the fold
-- More than one "About", "Features", "Pricing" section with near-identical copy
-- Feature grids where all card titles and descriptions are trivially similar (e.g., all start with "Easy to…", same length, same structure)
-
-Severity: **HIGH** for broken meta tags that will publicly mis-render; **MEDIUM** for duplicate sections.
-
-**8.5 Leaked secrets (feeds veto V5)**
-
-AI builders and copy-paste workflows routinely bake live API keys straight into the client bundle. Any such match is a hard ship-stop — it feeds **veto V5**, not a regular gate.
-
-Collection (do this with Playwright so dynamically-injected scripts are covered, not just the static HTML):
-1. Load the page and capture the **rendered HTML** (`document.documentElement.outerHTML`).
-2. Collect **all inline `<script>` contents** from the DOM.
-3. Collect **all external JS** the page actually loaded: capture every `script[src]` URL via `page.on('response')` (type `script`) and read each response body.
-4. Collect **public source maps**: for each loaded script with a `//# sourceMappingURL=` comment (or a `SourceMap` header), fetch the map; if it returns 200, add its `sourcesContent` to the blob. Original source often still carries the comments and constants the minifier dropped.
-5. Concatenate (1)–(4) into one text blob and run the regex set below over it.
-
-Regex set (case-sensitive where shown). Every pattern here is a **secret** — none is legitimately client-side, so any match fails V5:
-- `sk_live_[A-Za-z0-9]+`, `sk_test_[A-Za-z0-9]+`, `rk_live_[A-Za-z0-9]+` — Stripe secret and restricted keys
-- `sk-(proj|svcacct|admin)-[A-Za-z0-9_-]{20,}`, `sk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}` — OpenAI (project, service-account, admin, legacy)
-- `sk-ant-[a-z0-9]+-[A-Za-z0-9_-]{20,}` — Anthropic
-- `sk-or-v1-[a-f0-9]{64}` — OpenRouter
-- `gsk_[A-Za-z0-9]{20,}` — Groq
-- `xai-[A-Za-z0-9]{40,}` — xAI
-- `pplx-[A-Za-z0-9]{40,}` — Perplexity
-- `hf_[A-Za-z0-9]{30,}` — Hugging Face
-- `r8_[A-Za-z0-9]{20,}` — Replicate
-- `sb_secret_[A-Za-z0-9_-]{20,}` — Supabase secret key (bypasses Row Level Security)
-- `gh[pousr]_[A-Za-z0-9]{36}`, `github_pat_[A-Za-z0-9_]{60,}` — GitHub tokens
-- `xox[baprs]-[A-Za-z0-9-]+` — Slack token
-- `SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}` — SendGrid
-- `-----BEGIN (RSA |EC |OPENSSH |)PRIVATE KEY-----` — private key block
-- `AKIA[0-9A-Z]{16}` — AWS access key ID
-- `eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+` — JWT, **subject to the JWT rule below**
-
-**JWT rule.** Do not fail V5 on the regex alone. Base64url-decode the middle segment and read the payload:
-- `"role": "anon"` (Supabase legacy anon key, usually with `"iss": "supabase"`) → **public by design**, not a V5 match. Report it as an informational line: "Supabase anon key found — this is meant to be public; the data behind it is only as safe as the project's Row Level Security policies."
-- `"role": "service_role"` → V5 fail. This key bypasses Row Level Security and gives full database access.
-- any other payload → V5 fail, unless it is plainly not a credential (an `exp` long in the past *and* no `role`/`scope`/`sub` claim) — then report it as **LOW** for manual review.
-
-Printing the decoded `role` and `iss` is fine — they are not secret. Never print the token.
-
-**Public-by-design keys (never V5):**
-- `pk_live_…` / `pk_test_…` (Stripe publishable), `sb_publishable_…` (Supabase publishable) → not reported.
-- `AIza[A-Za-z0-9_-]{35}` (Google API key) → report as **MEDIUM**: "may be intended as a public key (Firebase config, Maps); confirm it is restricted by HTTP referrer and API." Raise it to **HIGH** when the Playwright network capture shows the key sent to an AI endpoint (`generativelanguage.googleapis.com`, `aiplatform.googleapis.com`): a Gemini key called from the browser lets any visitor spend the owner's quota.
-
-**Exposed secret files.** Also fetch `/.env`, `/.env.local`, `/.env.production`, `/.git/config`, and `/.git/HEAD`. A 200 alone proves nothing — SPA fallbacks answer every path with `index.html` — so a file counts as exposed only when its body matches its format: `.env*` has ≥ 1 line matching `^[A-Z_][A-Z0-9_]*=`, `.git/config` contains `[core]`, `.git/HEAD` starts with `ref: refs/`. Any exposed file fails V5: an `.env` is a list of secrets, and a readable `.git/` lets anyone download the full source and its history, including every secret ever committed.
-
-In **Local Project Mode**, the HTTP probe is meaningless when the local server serves the project root (static `npx serve .` would expose the repo's own `.env`, which the real deployment may not). There, inspect the **build output directory** (`dist/`, `build/`, `out/`, `.output/public/`, `public/`) for `.env*` files and `.git/` instead — a file found there ships with the site and fails V5. For projects served from the root without a build step, report a root `.env` as **MEDIUM** ("this file becomes public if the directory is deployed as-is").
-
-**Public-prefixed secret names (Local Project Mode).** Grep `.env*` files and the source for variables with a client-exposing prefix whose name says secret: `(NEXT_PUBLIC_|VITE_|PUBLIC_|NUXT_PUBLIC_|EXPO_PUBLIC_|REACT_APP_)\w*(SECRET|PRIVATE|SERVICE_ROLE|PASSWORD|_SK\b|API_KEY)`. Frameworks inline these into the client bundle at build time. Severity **HIGH**, not V5 on its own — the bundle scan above decides V5 if the value actually ships. Report the variable name, never its value.
-
-**Public source maps** found in step 4 are reported as **LOW** in Cat 5 ("original source is downloadable") even when they contain no secret — that is a deliberate choice for some sites, not always a defect.
-
-When V5 fails, **never print the matched secret value** in the report or `fix-me.md`; show the pattern name, the file/URL it was found in, and a character offset only.
-
-**Design-tell signals (informational only — never scored, never gated)**
-
-vibe2prod's slop definition is *unfinished artifacts* (8.1–8.5). There is a second, softer axis: *visual genericness* — default styling patterns that many AI builders converge on. These are **not defects**: Inter is a production-ready font, purple gradients and card grids are valid design choices, and the site is never penalized for them. They are worth a heads-up only because visitors increasingly recognize the combination as "AI-made", which can undercut a site whose goal is to look distinct.
-
-Detect (all trivially measurable, collected during the Cat 8/9 Playwright runs — no extra page loads):
-
-1. Primary body font is Inter, Roboto, Open Sans, or an unstyled system-ui default
-2. Dark background with cyan/teal or neon accent palette
-3. Purple-to-blue gradients (backgrounds, buttons, or gradient text on headings)
-4. Three or more visually identical cards in a grid (icon + heading + short text)
-5. Predominantly centered text (the majority of headings *and* body blocks)
-6. Decorative glassmorphism (`backdrop-filter: blur` plus translucent backgrounds)
-
-Rendering rule: only when **2 or more** signals are detected, append the short informational note defined in **Report Format** at the end of the report. Phrase it neutrally — "commonly recognized as AI-default styling; functionally fine" — never as an issue, never with a severity, never with a point value, and never as an item in `fix-me.md`. If the user asks for help differentiating the design, treat it as a normal user-visible design change: propose alternatives, show a diff, wait for approval.
-
-### Category 9: Responsiveness (multi-breakpoint, quantitative)
-
-Every check in this category is a **measurement**, not a heuristic. Every finding carries a number you can diff on re-test.
-
-#### Breakpoints to test
-
-| Name | Width × Height | Device reference |
+### Categories
+
+Each category's procedure lives in its own reference file. **For a full audit, read all eleven before measuring** — Phase 3 needs a result from every one of them. For a fix, a re-test of single findings, or a question about one check, read only the file concerned.
+
+| Cat | Reference | Feeds | Runs in |
+|---|---|---|---|
+| 1 Performance | [references/cat-01-performance.md](references/cat-01-performance.md) | P1–P4 | both modes |
+| 2 Accessibility | [references/cat-02-accessibility.md](references/cat-02-accessibility.md) | A1, A2 | both |
+| 3 SEO & Meta | [references/cat-03-seo.md](references/cat-03-seo.md) | V3, A3, S1–S6 | both |
+| 4 HTML Quality | [references/cat-04-html-quality.md](references/cat-04-html-quality.md) | H1 | both |
+| 5 Security | [references/cat-05-security.md](references/cat-05-security.md) | V2, Sec1–Sec3 | both |
+| 6 Assets | [references/cat-06-assets.md](references/cat-06-assets.md) | As1 | both |
+| 7 Robustness | [references/cat-07-robustness.md](references/cat-07-robustness.md) | V1, R1–R4 | both |
+| 8 AI-Slop Detection | [references/cat-08-ai-slop.md](references/cat-08-ai-slop.md) | V5, AI1–AI3 | both |
+| 9 Responsiveness | [references/cat-09-responsiveness.md](references/cat-09-responsiveness.md) | V4, Resp1, Resp2 | both |
+| 10 Stack Freshness | [references/cat-10-stack-freshness.md](references/cat-10-stack-freshness.md) | Readiness Score only | Local Project Mode only |
+| 11 Agent Readiness | [references/cat-11-agent-readiness.md](references/cat-11-agent-readiness.md) | nothing — report-only | both |
+
+### Bundled scripts
+
+The measurements that are easiest to get subtly wrong in hand-written code, and that each decide a gate, ship as scripts in this skill's `scripts/` directory. This skill's directory is `${CLAUDE_SKILL_DIR}` (in agents that do not substitute that variable: the folder containing this file); the reference files write it as `<skill-dir>` — substitute the absolute path before running a command. Run the scripts instead of writing your own version:
+
+| Script | Decides | Used in |
 |---|---|---|
-| xs | 320 × 568 | iPhone SE 1st gen, budget Androids |
-| sm | 375 × 667 | iPhone 13 Mini — default mobile baseline |
-| md | 768 × 1024 | iPad portrait |
-| lg | 1024 × 768 | iPad landscape, small laptop |
-| xl | 1280 × 800 | Mainstream laptop |
-| xxl | 1920 × 1080 | Ultra-wide / external monitor — **report-only** |
+| `scripts/responsive.mjs <url> --out <dir>` | Resp1, Resp2, the Cat 9 matrix, screenshots | Cat 9 |
+| `scripts/secret-scan.mjs <url> [--build-dir <dir>]… [--project-root <dir>] [--root-served]` | V5 and the Cat 8.5 findings | Cat 8.5 |
+| `scripts/gates.mjs <measurements.json>` | the 2Prod verdict and the Readiness Score | Phase 3 |
+| `scripts/check-runtime.mjs` | whether the script runtime works | Phase 1A |
 
-`xxl` extends coverage to ultra-wide desktops, where AI-generated layouts often let content stretch unconstrained past ~1400 px (full-width text lines, stretched hero images). It is **report-only**: gates Resp1/Resp2 keep evaluating exactly the five canonical breakpoints (xs–xl), so the 2Prod gate set and its cross-run comparability stay unchanged. xxl findings affect the Readiness Score only.
+Each prints one JSON object to stdout. **Their output is the measurement** — do not re-derive, round differently, or "correct" a value they report. Exit code **3** means the runtime is missing: mark the gates that script decides **INCONCLUSIVE**, never failed, and show the setup commands it printed. Exit code **2** from `gates.mjs` means the measurements file is incomplete or malformed; its message names what is missing — fill it in and re-run, never compute the verdict by hand instead.
 
-For each breakpoint, run a Playwright script that: sets `viewport`, navigates, waits for `document.readyState === 'complete'` plus a 500 ms settle, collects all measurements in one `page.evaluate(...)` batch, saves a full-page screenshot to `artifacts/responsive/<breakpoint>.png`, then moves on. Screenshots are kept across runs so re-tests can diff visually.
-
-#### Checks (per breakpoint)
-
-| Check | Measurement | Threshold | Severity |
-|---|---|---|---|
-| Horizontal overflow | `documentElement.scrollWidth > clientWidth` | Must be false | **CRITICAL** if true at ≤ 768 px |
-| Tap-target size (AA) | Count of `button, a, input, select, [role="button"]` that are **eligible** (see below) with `bbox < 24×24` CSS px | 0 failures | **HIGH** (WCAG 2.5.8) |
-| Tap-target size (AAA) | Same eligible set, 44×44 threshold | Report % passing | **MEDIUM** (WCAG 2.5.5) |
-| Tap-target spacing | For each target: 24 px circle around its center — does it intersect another target? | 0 intersections | **MEDIUM** (WCAG 2.5.8 spacing exception) |
-| Body-text font-size | `getComputedStyle(p, li).fontSize` at ≤ 768 px, **prose only** (see below) | ≥ 16 px | **MEDIUM** |
-| Input font-size | `getComputedStyle(input, textarea, select).fontSize` at ≤ 768 px | ≥ 16 px (below this, iOS auto-zooms on focus) | **HIGH** |
-| Viewport meta zoom-lock | Parse `<meta name="viewport">` content | No `user-scalable=no` or `maximum-scale ≤ 1` | **HIGH** (WCAG 1.4.4) |
-| Media-query coverage | Count of `@media` rules across all stylesheets | ≥ 1 | **CRITICAL** if 0 (site is not responsive at all) |
-| `<img>` width/height attrs | Count of `<img>` missing either attribute | 0 missing | **MEDIUM** (prevents CLS) |
-| `srcset` effectiveness | For each `<img srcset>`: compare `currentSrc` at xs vs xl | Different sources | **LOW** (confirms srcset is wired up) |
-| Safe-area-inset usage | CSS contains `env(safe-area-inset-*)` on any fixed/sticky element | Present if the site has a fixed header/footer | **LOW** |
-| Content clipping | Non-hidden elements holding text, with `scrollWidth > clientWidth + 4` AND no `overflow: auto/scroll` set | 0 | **MEDIUM** |
-
-**Which tap targets are eligible.** Start from every rendered `button, a, input, select, [role="button"]`, then remove:
-
-- everything caught by the **visually-hidden** rule in *Shared measurement rules* — skip links above all
-- targets covered by the **WCAG 2.5.8 "Inline" exception**: the target sits in a sentence, or its size is otherwise constrained by the line-height of surrounding non-target text. Detect it as: computed `display` starts with `inline` **and** the element has a `p`, `li`, `blockquote`, `figcaption`, or `td` ancestor whose text is longer than the target's own text (i.e. there really is a sentence around it). A link set mid-paragraph is 19 px tall because the line is 19 px tall; enlarging it would break the paragraph, which is exactly why the exception exists. A link that is the *only* content of its paragraph is **not** covered — there is no surrounding non-target text to constrain it.
-- targets covered by the **WCAG 2.5.8 "Spacing" exception**: an undersized target passes if a 24 CSS px diameter circle centred on its bounding box intersects neither another target's box nor another undersized target's circle. This is already measured one row above in the check table — **use that measurement here** instead of re-deriving it. An isolated link with nothing within 24 px of it meets the success criterion at its measured size, and reporting it as a failure sends the user to "fix" something WCAG explicitly permits.
-
-Apply the exceptions in that order and report per rule 2 above: raw count, eligible count, and which exception removed what. If the eligible count is 0 but the raw count was not, say so explicitly — that is a meaningful result, not an empty one. **Name the exception you applied.** "Excluded as inline" and "excluded by spacing" are different claims about the page, and only one of them is true for any given target; getting it wrong hides a real failure or invents one.
-
-**Which paragraphs count as prose.** The body-text font-size check measures reading text, not labels. Include a `p`/`li` only when it is not visually hidden and holds **≥ 15 words**. Tech-stack tags, section eyebrows, star counts, badges, and footer one-liners are metadata; typographic convention sets them smaller on purpose, and flagging them buries the case this check exists for — actual body copy set too small to read on a phone. Report the font-size **distribution** across prose paragraphs (e.g. `16 px × 27, 20 px × 7, 24 px × 1 — 0 prose paragraphs below 16 px`), not a bare failure count, and mention the smallest non-prose size separately when it falls below 11 px.
-
-Where WCAG rules apply (tap-target size, zoom-lock), prefer the existing axe-core rule output from Category 2 over re-implementing. Do not double-count issues — if axe already flagged it, reference the axe finding instead of creating a new one. When your own measurement and axe disagree on a WCAG rule, **axe wins** and the disagreement goes in the report — it usually means the re-implementation is missing an exception axe already encodes.
-
-#### Report output
-
-Output a compact matrix — one row per check, one column per breakpoint, each cell is pass/fail or the measured number:
-
-```
-Responsiveness (Cat 9)
-                              xs     sm     md     lg     xl     xxl*
-Horizontal overflow            ✗      ✓      ✓      ✓      ✓      ✓
-Tap-targets <24px (eligible)   7      3      0      0      0      0
-Tap-targets <44px             18      9      2      0      0      0
-Body font-size <16px           ✗      ✗      —      —      —      —
-Input font-size <16px          ✗      ✗      —      —      —      —
-Viewport zoom-lock             OK (one value, not per bp)
-Media-query rules              14 (one value, not per bp)
-<img> missing w/h              0      0      0      0      0      0
-srcset differentiation         3/5    3/5    3/5    3/5    4/5    4/5
-Safe-area-inset                missing (fixed header detected)
-Content clipping               2      1      0      0      0      0
-
-* xxl is report-only — not evaluated by gates Resp1/Resp2.
-Screenshots: artifacts/responsive/{xs,sm,md,lg,xl,xxl}.png
-```
-
-For re-test in Phase 5, the same matrix is regenerated and every cell becomes a delta (e.g., `Tap-targets <24px: 7 → 0 (-7)`). Screenshots are kept so the user can pixel-diff before/after.
-
-#### Auto-fixes
-
-- **Viewport zoom-lock** → rewrite `<meta name="viewport">` to `width=device-width, initial-scale=1`.
-- **Missing `<img>` width/height** → in Local Project Mode only: read each local image with sharp, infer `width`/`height`, insert the attributes.
-- **Horizontal overflow** → locate the widest element via Playwright (`document.elementFromPoint(width+1, y)`) and report the exact selector. Do not auto-edit CSS without showing the user the offending rule and proposed fix.
-- **Tap-target fails** → list each failing selector with its measured size and a concrete padding suggestion. Do not auto-apply (tap-target fixes ripple into layout).
-
-### Category 10: Stack Freshness (live version check — no training knowledge)
-
-**Critical rule:** Never answer "is this version current?" from training data. LLM training is 3–9 months stale and package release cadence is faster than that. Always fetch live version info from the sources below. If the live lookup fails (no network, registry 5xx), **abort Category 10 with a clear warning** rather than falling back to your memory.
-
-Runs only in **Local Project Mode** (requires a `package.json`). In remote-URL mode, skip this category and note it in the report.
-
-#### Step 1: Detect stack
-
-Read `package.json` and collect `dependencies` + `devDependencies`. Also read `.nvmrc`, `.node-version`, and `package.json#engines` for runtime version constraints. Classify against this reference set:
-
-| Family | Packages to watch |
-|---|---|
-| Meta-frameworks | `next`, `nuxt`, `@remix-run/*`, `@sveltejs/kit`, `astro`, `gatsby`, `@solidjs/start`, `qwik`, `@builder.io/qwik-city` |
-| Base frameworks | `react`, `react-dom`, `vue`, `svelte`, `solid-js`, `preact`, `@angular/core` |
-| Styling | `tailwindcss`, `styled-components`, `@emotion/react`, `@stitches/react`, `@chakra-ui/react`, `@mantine/core`, `@radix-ui/themes` |
-| Build tools | `vite`, `webpack`, `@rspack/core`, `esbuild`, `turbopack`, `parcel` |
-| Language / types | `typescript`, `@types/node` |
-| Runtime | `node` (from `engines`, `.nvmrc`, or `.node-version`) |
-
-Packages not on this list are not flagged for *freshness* — vibe2prod is opinionated, not a generic `npm outdated` replacement. The *vulnerability* check (Step 3b) and the *dependency-integrity* check (Step 3c) are different: a known-exploited hole or a non-existent package matters wherever it sits, so those cover more than the watch list.
-
-#### Step 2: Resolve installed versions, then fetch registry data live
-
-**Installed version** means the exact version that gets built — read it from the lockfile (`package-lock.json` → `packages["node_modules/<pkg>"].version`, or the `pnpm-lock.yaml` / `yarn.lock` / `bun.lock` entry), falling back to `node_modules/<pkg>/package.json`. Never use the range in `package.json`: `^18.2.0` says nothing about what is installed. If neither a lockfile nor `node_modules` exists, take the lowest version that satisfies the range and say so in the Notes column.
-
-For each detected package, make two lookups:
-
-```bash
-# latest version plus the publish-time map (the abbreviated /latest manifest has no `time` field)
-npm view "<pkg>" version time --json
-# the INSTALLED version's own manifest — its `deprecated` field is what decides CRITICAL
-npm view "<pkg>@<installed>" deprecated engines --json
-```
-
-Fallback without the npm CLI: `curl -sSL "https://registry.npmjs.org/<pkg>"` (full packument: `dist-tags.latest`, `time`, `versions["<installed>"].deprecated`). Do not use `/latest` for the deprecation check — it describes the newest release, not the one installed.
-
-For Node itself, fetch the official release schedule:
-
-```bash
-curl -sSL "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json"
-# e.g. {"v18": {"start": "2022-04-19", "lts": "2022-10-25", "maintenance": "2023-10-18", "end": "2025-04-30", "codename": "Hydrogen"}, ...}
-```
-
-A Node line is **supported** when it has an `lts` key and `lts ≤ today < end`. Do not use `nodejs.org/dist/index.json` for this: its `lts` field carries the codename for every release that was *ever* LTS, end-of-life lines included, so Node 16 still reads as "Gallium". The LTS schedule changes annually — never guess it from training data.
-
-If any registry call fails, output: `[Cat 10 skipped: live version lookup failed — refusing to use stale training data. Network issue? Retry later.]`
-
-#### Step 3: Classify each package
-
-Compute the semver gap between installed and latest, and the age gap from `time[<installed>]` vs `time[<latest>]`:
-
-| Condition | Severity |
-|---|---|
-| Same version, or only patch drift | **OK** (not reported as issue) |
-| Minor behind (put the age gap in the Notes column) | **LOW** |
-| One major version behind | **MEDIUM** |
-| Two or more major versions behind | **HIGH** |
-| Installed version carries a `deprecated` message on npm | **CRITICAL** |
-| Node runtime line is not supported per `schedule.json` (past `end`, or never an LTS line) | **HIGH** |
-
-#### Step 3b: Known vulnerabilities (live, via OSV.dev)
-
-Version age says nothing about security: an app one patch release behind can still ship a remotely exploitable hole (React2Shell, CVE-2025-55182, hit current React 19 / Next.js releases and was patched in point releases). Query OSV.dev for every package version in the lockfile:
-
-```bash
-# one query object per lockfile entry; ≤ 1000 per request, follow next_page_token
-curl -sS -X POST "https://api.osv.dev/v1/querybatch" \
-  -d '{"queries":[{"package":{"name":"next","ecosystem":"npm"},"version":"15.5.6"}, …]}'
-# the batch response carries only IDs — fetch details per hit
-curl -sS "https://api.osv.dev/v1/vulns/<id>"
-```
-
-Severity comes from the advisory, never from your own reading of it: use `database_specific.severity` (GitHub advisories: `CRITICAL` / `HIGH` / `MODERATE` → MEDIUM / `LOW`). If an advisory carries no such field, use **MEDIUM** and note "severity not provided". Packages marked `"dev": true` in the lockfile are capped at **LOW** — they do not ship to the browser or the server. Report one row per advisory with its ID, the installed version, and the first fixed version from `affected[].ranges[].events[].fixed`.
-
-If OSV is unreachable, print `vulnerability check skipped — OSV.dev unreachable` and never say "no known vulnerabilities". A missing lockfile means only direct dependencies at their resolved versions can be checked — say so.
-
-#### Step 3c: Dependency integrity (hallucinated and squatted packages)
-
-AI assistants sometimes invent package names, and attackers register those names once they are suggested often enough ("slopsquatting"). For each **direct** dependency in `package.json` that resolves from the npm registry (skip `git:`, `file:`, `workspace:`, `link:`, and URL specs):
-
-```bash
-npm view "<pkg>" name time.created --json        # E404 → does not exist on the configured registry
-curl -sS "https://api.npmjs.org/downloads/point/last-week/<pkg>"
-```
-
-| Condition | Severity |
-|---|---|
-| Package does not exist on the configured registry (E404) | **CRITICAL** — the build only works from a stale cache or a private mirror; if it is meant to be private, the registry config is missing |
-| Installed version is `0.0.1-security` (npm's placeholder after removing a malicious package) | **CRITICAL** |
-| Package created < 30 days ago **and** < 1,000 downloads last week | **HIGH** — "very new, barely used: confirm this is the package you meant" |
-
-Use the registry from the project's `.npmrc` when present — `npm view` does this automatically. Report the name and the evidence, never a verdict that the package is malicious.
-
-#### Step 4: Deprecated-API hint (optional, via a docs MCP)
-
-For **MEDIUM** and **HIGH** findings on meta-frameworks (Next.js, Nuxt, Astro, SvelteKit, Remix), fetch the current migration guide link through a docs MCP such as Context7. Tool names differ between installs and versions (e.g. `resolve-library-id` plus `query-docs` or `get-library-docs`, under varying `mcp__…__` prefixes) — use whichever the session exposes:
-
-1. Resolve the package name to the library identifier.
-2. Query the docs for the migration guide between the installed and the latest major.
-3. Include the migration URL in the finding. Do **not** paraphrase the migration guide — just link to it. That keeps the authoritative source the source.
-
-If no docs MCP is connected, or the call errors, degrade gracefully: still report the version gap, omit the migration link. The version-gap finding never depends on the docs lookup.
-
-#### Report output
-
-```
-Stack Freshness (Cat 10)
-
-Package              Installed    Latest      Gap            Severity  Notes
-next                 12.3.4       15.1.2      3 major        HIGH      Migration: <url from Context7>
-react                18.2.0       19.0.0      1 major        MEDIUM    Peer of next — bump together
-tailwindcss          3.4.1        4.0.0       1 major        MEDIUM    v4 config format is new
-typescript           5.3.3        5.7.2       minor (~4 mo)  LOW
-vite                 5.4.8        5.4.11      patch          OK        (not listed)
-node (engines)       18.x         22.x (LTS)  2 major        HIGH      Node 18 reached end-of-life 2025-04-30
-
-Known vulnerabilities (OSV.dev, 412 lockfile entries checked)
-Advisory              Package   Installed   Fixed in   Severity
-GHSA-xxxx-xxxx-xxxx   next      15.5.6      15.5.7     CRITICAL   (CVE-2025-55182)
-
-Dependency integrity (23 direct dependencies checked): 0 missing, 0 suspicious
-
-Live lookup: npm registry (14 packages checked), nodejs/Release schedule.json (Node LTS schedule), OSV.dev
-```
-
-#### Auto-fixes
-
-- **Patch/minor bumps within the same major** → propose a `package.json` diff that updates the version range. Show the diff, wait for approval. Never run `npm install` without explicit user consent.
-- **Major-version migrations** → never auto-apply. Output the migration guide link (fetched live via the docs MCP) and stop. Major upgrades ripple into breaking API changes and are not safe to automate.
-- **Deprecated packages** → suggest replacements from the `deprecated` field's message (maintainers usually point to the successor package there).
-- **Known vulnerabilities** → propose bumping to the first fixed version. Within the same major this is a normal version-range diff (show it, wait for approval); across a major it follows the major-migration rule above.
-- **Missing or suspicious packages** → never auto-remove. Show the evidence and ask the user what the package was meant to be.
-
-### Category 11: Agent Readiness (report-only — never gated, never scored)
-
-Sites are increasingly read by agents, not only by people and classic crawlers: assistant browsing, LLM answer engines, MCP-driven automation. This category measures how legible the site is to them.
-
-**Report-only, by design.** Cat 11 does **not** feed 2Prod — the gate set stays 5 vetos + 27 regular gates — and does **not** feed the Readiness Score, whose category weights are unchanged. Two reasons. (a) 2Prod answers *"can I publish this now?"*, and a missing `llms.txt` has never stopped anyone from publishing. (b) The underlying specs are months old and still moving — Google ships its own Lighthouse equivalent marked *experimental* — and gating on a moving spec would break exactly the cross-run comparability the **Stability rules** promise. Same precedent as the `xxl` breakpoint (report-only for gates) and the design-tell signals (informational).
-
-Never render a Cat 11 result as a defect, and never attach a point value to it. These are opportunities, not findings.
-
-Unlike Cat 10, this category runs in **both** modes. Every check works against a localhost prod server, so a local run and a remote run produce the same Cat 11 block.
-
-#### Checks
-
-Every check reuses data the audit already collected — `page.html` from Cat 3, the 404 probe from Cat 7, the Playwright round from Cat 8/9 — plus at most three small `curl` calls. No new dependency.
-
-| ID | Check | Measurement | Result |
-|---|---|---|---|
-| AR1 | `llms.txt` present | `GET <url>/llms.txt` returns HTTP 200 with a `text/*` content type | present / missing |
-| AR2 | `llms.txt` well-formed | body has an `# ` H1, ≥ 1 Markdown link, and ≥ 50 non-whitespace characters | ok / malformed / n/a |
-| AR3 | Content without JavaScript | strip `<script>`, `<style>`, and tags from the **raw** `page.html`: is an `<h1>` present in the raw body, and is there ≥ 500 characters of text? | pass / fail (+ char count) |
-| AR4 | Agent-recoverable 404 | the Cat 7 404 probe: status is 404 **and** the body carries ≥ 1 internal `<a href>` and ≥ 100 characters of text | pass / fail |
-| AR5 | Identity structured data | JSON-LD contains an identity node (`Organization`, `LocalBusiness`, `Person`, or `WebSite`) with non-empty `name`, `url`, `description`, `sameAs` | n/4 fields |
-| AR6 | Markdown content negotiation | `curl -sI -H "Accept: text/markdown" <url>` returns `content-type: text/markdown` **and** a `Vary: Accept` header; if an `x-markdown-tokens` header is present (Cloudflare's *Markdown for Agents*), report its value | present / absent (bonus) |
-| AR7 | WebMCP tools | **declarative**: count of `<form>` elements carrying both `toolname` and `tooldescription` attributes; **imperative**: in the Playwright round, whether `navigator.modelContext` exists and tools were registered on it (only observable in a Chrome build with WebMCP enabled — otherwise report "not observable") | n declarative / imperative present / absent (bonus) |
-
-AR3 is the check with real weight here: it is the same raw-HTML measurement the **Static HTML rule** already applies to gates S6 and H1, and a CSR-only site that renders nothing without JavaScript is invisible to most agents *and* to a share of crawlers.
-
-AR6 and AR7 are **bonus**. Their specs are young and absence is the norm — report them as "absent" with no implication that they should be present. WebMCP in particular is in a Chrome origin trial and its declarative attribute names are not yet in the spec text; they may still change.
-
-#### AI-crawler policy (neutral note — never a finding)
-
-Read `robots.txt` and record which agent user-agents are disallowed: `GPTBot`, `OAI-SearchBot`, `ChatGPT-User`, `ClaudeBot`, `Claude-SearchBot`, `Claude-User`, `PerplexityBot`, `Perplexity-User`, `Google-Extended`, `Applebot-Extended`, `CCBot`, `Bytespider`, `meta-externalagent`, `Meta-ExternalFetcher`, `Amazonbot`. Legacy tokens (`anthropic-ai`, `Claude-Web`) are no longer used by their operator — if `robots.txt` only blocks those, say so neutrally ("these tokens are deprecated; the current ones are …"), as a factual note, not a recommendation.
-
-Also record any **content-usage signals**: `Content-Signal:` lines in `robots.txt` (Cloudflare's Content Signals Policy — `search`, `ai-input`, `ai-train`, each `yes`/`no`) and `Content-Usage` lines or headers (IETF AI Preferences drafts). Print the values as found.
-
-State what you found and stop. Blocking AI crawlers is a **business decision**, not a defect — a paid-content site blocking them is doing the right thing. Phrase this exactly like the design-tell note: neutral, no severity, no point value, no fix item, never exported to `fix-me.md`. Never write "you should allow these" or "this hurts your reach".
-
-#### Optional: Lighthouse `agentic-browsing` passthrough
-
-Google added an `agentic-browsing` category in **Lighthouse 13.3** (requires Chrome ≥ 150). It is marked experimental, and its score is not comparable to the other Lighthouse categories: its `llms-txt` audit returns `notApplicable` — not 0 — when the file is missing, and its three WebMCP audits are `notApplicable` for every site without WebMCP. For a normal site only two audits actually score, and both of them (`agent-accessibility-tree`, `cumulative-layout-shift`) are already measured here, by axe in Cat 2 and by gate P3.
-
-So: if the Phase 1A version probe found Lighthouse ≥ 13.3, run
-
-```bash
-lighthouse "$url" --output=json --output-path=./lh-agentic.json --only-categories=agentic-browsing --chrome-flags="--headless --no-sandbox" --quiet
-```
-
-and report the per-audit results verbatim as an extra block labelled *"Lighthouse agentic-browsing (experimental)"*, showing `notApplicable` as `n/a`. Report the raw fraction Lighthouse gives, never a 0–100 score. If the installed Lighthouse is older, **omit the block silently** — do not mark it INCONCLUSIVE. This is optional enrichment, not a measurement the report depends on.
-
-#### Report output
-
-```
-Agent Readiness (Cat 11) — report-only, not part of 2Prod or the Readiness Score
-
-AR1  llms.txt                  missing
-AR2  llms.txt well-formed      n/a
-AR3  Content without JS        ✓   h1 present, 2,140 chars in raw HTML
-AR4  Agent-recoverable 404     ✗   404 status correct, but body has 0 internal links
-AR5  Identity structured data  2/4 Organization: name ✓, url ✓, description ✗, sameAs ✗
-AR6  Markdown negotiation      absent (bonus)
-AR7  WebMCP annotations        absent (bonus)
-
-AI-crawler policy: robots.txt disallows GPTBot, ClaudeBot. Content-Signal: search=yes,
-ai-train=no. Neutral note — that is a business decision, not a defect.
-
-Lighthouse agentic-browsing (experimental, LH 13.4.1):
-  agent-accessibility-tree 1 · cumulative-layout-shift 1 · llms-txt n/a · webmcp-* n/a
-```
-
-#### Fixes
-
-Cat 11 items are fixed only on explicit request. They are never part of `--ship`'s autopilot pass — autopilot exists to flip 2Prod gates, and Cat 11 has none.
-
-- **AR1 / AR2** — generate a starter `llms.txt` from the site's own title, meta description, and sitemap entries. Show it and wait for approval: it is public-facing copy.
-- **AR4** — add internal recovery links to the 404 template.
-- **AR5** — complete the existing identity JSON-LD block. Never invent `sameAs` profile URLs; ask the user for them.
-- **AR3** — a CSR-only site failing AR3 needs SSR, SSG, or prerendering. Report it, link the framework's own docs, and stop. That is an architecture decision, not an audit fix.
+Everything else — Lighthouse, axe, the curl checks, the Cat 7 and remaining Cat 8 DOM checks — you run yourself, following the reference files.
 
 ## Persistence & artifacts
 
@@ -830,6 +241,7 @@ Every run writes to `.vibe2prod/` — in the audited project root (Local Project
       lh-seo.json
       axe-report.json
       w3c-report.json
+      measurements.json            # gates.mjs input — reproduces the verdict
       lh-agentic.json              # only when Cat 11's optional passthrough ran
       responsive/{xs,sm,md,lg,xl,xxl}.png
 ```
@@ -837,7 +249,7 @@ Every run writes to `.vibe2prod/` — in the audited project root (Local Project
 **Run journal (`runs.jsonl`).** Append exactly one JSON object per completed run:
 
 ```json
-{"run":"20260824-171205","url":"https://example.com","mode":"remote","skill_version":"0.8.0",
+{"run":"20260824-171205","url":"https://example.com","mode":"remote","skill_version":"0.9.0",
  "twoprod":{"band":"NOT YET","pct":74.1,"passed":20,"denominator":27,
             "failed":["S2","H1","Sec1"],"deferred":[],"inconclusive":[],"vetos_failed":[]},
  "readiness":62,
@@ -857,7 +269,7 @@ Rules:
 
 ## Phase 3: Generate Report
 
-After all checks complete, aggregate results into a single report. First move the durable artifacts (`lh-perf-median.json`, `lh-a11y.json`, `lh-seo.json`, the axe report, the W3C report, the responsiveness screenshots, and `lh-agentic.json` if Cat 11's optional passthrough ran) into `.vibe2prod/artifacts/<run-id>/` and append the run journal line per the **Persistence & artifacts** section. Then clean up **only the scratch files** (`lh-perf-1/2/3.json`, `psi-report.json`, `page.html`, `headers.txt`, the pre-move `w3c-report.json`, server logs) and — in Local Project Mode — shut down the prod server. **Never delete `.vibe2prod/`.**
+After all checks complete, write `measurements.json` and run `gates.mjs` (see *Computing it* below), then aggregate everything into a single report. First move the durable artifacts (`measurements.json`, `lh-perf-median.json`, `lh-a11y.json`, `lh-seo.json`, the axe report, the W3C report, the responsiveness screenshots, and `lh-agentic.json` if Cat 11's optional passthrough ran) into `.vibe2prod/artifacts/<run-id>/` and append the run journal line per the **Persistence & artifacts** section. Then clean up **only the scratch files** (`lh-perf-1/2/3.json`, `psi-report.json`, `page.html`, `headers.txt`, the pre-move `w3c-report.json`, server logs) and — in Local Project Mode — shut down the prod server. **Never delete `.vibe2prod/`.**
 
 ### 2Prod (project-independent ship/no-ship verdict)
 
@@ -947,6 +359,34 @@ If any veto fails, 2Prod = 🔴 BLOCKED. Display the failed veto ID(s) inline. D
 
 5. **READY-band guard.** The two 🟢 bands (READY, Light Green) additionally require **Resp1 (no horizontal overflow) to pass**. A site that scrolls sideways on a phone is not something you call "ready to ship", no matter how high the percentage. If Resp1 failed, cap the band at 🟡 NOT YET regardless of `pct`, and note `(capped at NOT YET: Resp1 horizontal overflow)` in the headline. No other gate has this guard — Resp1 is singled out because it's both common in AI-generated layouts and immediately visible to every mobile visitor.
 6. Record the list of **failed gate IDs** (and any DEFERRED / INCONCLUSIVE IDs separately). They are surfaced in the report headline so the user instantly sees which gates need to flip.
+7. **Inconclusive veto.** A veto whose measurement could not be taken (e.g. V5 when the page never loaded) does not block, but it cannot vouch for the site either: compute the band from the regular gates, cap a 🟢 band at 🟡 NOT YET, and label the verdict *provisional* with the veto named.
+
+#### Computing it: `gates.mjs`
+
+Do not do this arithmetic by hand. Write every gate result and every scored check into `measurements.json` and run `node ${CLAUDE_SKILL_DIR}/scripts/gates.mjs measurements.json`:
+
+```json
+{
+  "mode": "remote",
+  "vetos": { "V1": "pass", "V2": "pass", "V3": "pass", "V4": "pass", "V5": "pass" },
+  "gates": { "P1": "pass", "P2": "fail", "H1": "inconclusive", "…": "one entry per regular gate" },
+  "categories": {
+    "performance":   { "lighthouse": 0.83 },
+    "accessibility": { "lighthouse": 0.91 },
+    "seo":           { "lighthouse": 0.92 },
+    "responsiveness": { "horizontal-overflow": "CRITICAL", "tap-target-aa": null, "…": "every key from the table below" },
+    "security": { … }, "aislop": { … }, "robustness": { … }, "assets": { … }, "html": { … },
+    "stack": null
+  }
+}
+```
+
+- Gates and vetos: `"pass"`, `"fail"`, or `"inconclusive"`. In Local Project Mode, Sec1–Sec3 may be omitted — they are deferred whatever they say.
+- Checks: `null` when the check passes or does not apply, otherwise the severity of its finding, or a list of severities when it has several (`["HIGH", "LOW"]`). Every key of the category must be present.
+- `stack`: `null` in remote-URL mode; in Local Project Mode the three fixed keys plus one `pkg:<name>` per detected watch-list package.
+- Lighthouse scores are the 0–1 values from the JSON (`categories.<id>.score`), the performance one being the median of the three runs.
+
+The output's `twoprod` object is the 2Prod headline and the `twoprod` line of the run journal; `readiness.total`, `readiness.categories`, and `readiness.caps` give the Readiness Score and the category line; `readiness.deductions[].points` is the `Fix → +N.N pts` of each failing check (Method B); `notes` and `warnings` go into the report verbatim. Keep `measurements.json` with the run's artifacts.
 
 #### Stability rules
 
@@ -991,17 +431,17 @@ Every audit computes a single 0–100 Readiness Score. This is the headline numb
 3. Each check deducts **once**, at the severity of its worst finding: **CRITICAL** / **HIGH** = full check value, **MEDIUM** = 0.5 ×, **LOW** = 0.25 ×. Further findings in the same check are listed but deduct nothing more — ten undersized tap targets are one failed check, not ten.
 4. A category can never go below 0.
 
-| Category (cap) | Checks | Value per check |
-|---|---|---|
-| 9 Responsiveness (17) | 12: horizontal overflow · tap-target AA · tap-target AAA · tap-target spacing · body-text font-size · input font-size · viewport zoom-lock · media-query coverage · `<img>` width/height · `srcset` effectiveness · safe-area-inset · content clipping | 1.417 |
-| 5 Security (12) | 10: HTTPS + redirect · HSTS · CSP · X-Frame-Options · X-Content-Type-Options · Referrer-Policy · Permissions-Policy · cookie flags · mixed content · public source maps | 1.2 |
-| 8 AI-Slop (8) | 10: placeholder text (8.1) · placeholder URLs & dead anchors (8.2) · fake navigation (8.2) · placeholder images (8.3) · fake social proof (8.3) · alt-text quality (8.3) · hallucinated meta tags (8.4) · builder defaults & residue (8.4) · duplicate sections (8.4) · leaked secrets & secret exposure (8.5) | 0.8 |
-| 7 Robustness (7) | 19: console errors · compression · caching headers · `prefers-reduced-motion` · `prefers-color-scheme` · viewport meta · custom 404 · `noscript` · focus visibility · form autocomplete & input types · paste blocking · `transition: all` · `color-scheme` · centered long-form text · justified text without hyphenation · text zoom 200 % · focus obscured · reading order · link names | 0.368 |
-| 6 Assets (5) | 10: image formats · responsive images · broken links · font loading · favicon · apple-touch-icon · web app manifest · `theme-color` · fake bold/italic · font-family sprawl | 0.5 |
-| 4 HTML Quality (3) | 4: HTML errors (bucket 1) · other CSS messages (bucket 3) · HTML warnings · semantic structure (landmarks, heading nesting) | 0.75 |
-| 10 Stack Freshness (2) | n + 3: one per detected watch-list package · Node runtime · known vulnerabilities · dependency integrity | 2 / (n + 3) |
+| Category (cap) | `measurements.json` key | Checks (measurement keys) | Value per check |
+|---|---|---|---|
+| 9 Responsiveness (17) | `responsiveness` | 12: `horizontal-overflow` · `tap-target-aa` · `tap-target-aaa` · `tap-target-spacing` · `body-font-size` · `input-font-size` · `viewport-zoom-lock` · `media-query-coverage` · `img-dimensions` · `srcset-effectiveness` · `safe-area-inset` · `content-clipping` | 1.417 |
+| 5 Security (12) | `security` | 10: `https-redirect` · `hsts` · `csp` · `x-frame-options` · `x-content-type-options` · `referrer-policy` · `permissions-policy` · `cookie-flags` · `mixed-content` · `public-source-maps` | 1.2 |
+| 8 AI-Slop (8) | `aislop` | 10: `placeholder-text` · `placeholder-urls` · `fake-navigation` · `placeholder-images` · `fake-social-proof` · `alt-text-quality` · `hallucinated-meta` · `builder-leftovers` · `duplicate-sections` · `leaked-secrets` | 0.8 |
+| 7 Robustness (7) | `robustness` | 19: `console-errors` · `compression` · `caching-headers` · `reduced-motion` · `color-scheme-media` · `viewport-meta` · `custom-404` · `noscript` · `focus-visibility` · `form-autocomplete` · `paste-blocking` · `transition-all` · `color-scheme` · `centered-text` · `justified-text` · `text-zoom` · `focus-obscured` · `reading-order` · `link-names` | 0.368 |
+| 6 Assets (5) | `assets` | 10: `image-formats` · `responsive-images` · `broken-links` · `font-loading` · `favicon` · `apple-touch-icon` · `manifest` · `theme-color` · `fake-bold-italic` · `font-sprawl` | 0.5 |
+| 4 HTML Quality (3) | `html` | 4: `html-errors` · `css-messages` · `html-warnings` · `semantic-structure` | 0.75 |
+| 10 Stack Freshness (2) | `stack` | n + 3: `node-runtime` · `vulnerabilities` · `dependency-integrity` · one `pkg:<name>` per detected watch-list package | 2 / (n + 3) |
 
-CSS vocabulary messages (Cat 4 bucket 2), design-tell signals, and Cat 11 are not checks and never appear here.
+The key → check mapping follows the order of each category's reference file (e.g. `public-source-maps` is the Cat 5 public-source-maps line, `builder-leftovers` the 8.4 scaffold/builder block, `leaked-secrets` everything in 8.5 that is not itself V5). `scripts/lib/scoring.mjs` holds the same lists and rejects any key that is missing or unknown. CSS vocabulary messages (Cat 4 bucket 2), design-tell signals, and Cat 11 are not checks and never appear here.
 
 **Point values with several findings per check.** A finding's `Fix → +N.N pts` is the value its *check* regains. When a check has more than one finding, only fixing all of them regains it — print the value once, on the check's worst finding, and reference the others: `Fix → +1.4 pts (together with #7, #9)`. The others show `Fix → part of #4`.
 
@@ -1035,32 +475,6 @@ Findings inside a group are sorted by severity (CRITICAL → HIGH → MEDIUM →
 
 Cat 11 (Agent Readiness) maps to **no** impact group. It carries no severity and no points, so it cannot be sorted next to scored findings — it renders in its own report section, like the design-tell note.
 
-### Report Rendering — Finding Format
-
-Every finding is rendered in **four lines**, always in this order. This dual-audience format lets vibe-coders stop reading after line 2 and pros skip straight to lines 3–4:
-
-1. **Headline line** — traffic-light emoji + plain-language what's wrong + category tag. Example: `🔴 Site feels slow [Performance]`
-2. **Impact line** (plain language, what this means for the user/visitor). Example: `Your hero image takes 3.2 s to appear. Visitors typically bounce around 3 s.` *Suppressed in `--pro` mode.*
-3. **Technical line** — technical term, exact measurement, threshold, and a reference URL. Example: `LCP 3.2 s (Core Web Vitals "Poor", target < 2.5 s). LCP element: <img class="hero"> 890 KB, no fetchpriority="high", no Brotli. Ref: https://web.dev/lcp`
-4. **Fix line** — concrete action + point value on success. Example: `→ Add fetchpriority="high" to hero img, enable Brotli at hosting layer. Fix → +5.7 pts`
-
-Example rendering of a single issue (default mode):
-
-```
-🟡 Site breaks on small phones [Responsiveness]
-On iPhone SE (320 px wide), your header extends 40 px past the screen edge — visitors have to scroll sideways to see your menu.
-Horizontal overflow at xs breakpoint: documentElement.scrollWidth = 360 px, clientWidth = 320 px (diff +40 px). Offending element: <nav class="main-nav"> with fixed width: 360px. WCAG 1.4.10 Reflow. Ref: https://www.w3.org/WAI/WCAG22/Understanding/reflow
-→ Replace fixed width on .main-nav with max-width: 100%; overflow-x: hidden is not a fix — it hides the problem. Fix → +1.4 pts
-```
-
-Same issue in `--pro` mode (line 2 dropped):
-
-```
-🟡 Horizontal overflow at xs [Responsiveness]
-Horizontal overflow at xs breakpoint: documentElement.scrollWidth = 360 px, clientWidth = 320 px (diff +40 px). Offending element: <nav class="main-nav"> with fixed width: 360px. WCAG 1.4.10 Reflow. Ref: https://www.w3.org/WAI/WCAG22/Understanding/reflow
-→ Replace fixed width on .main-nav with max-width: 100%. Fix → +1.4 pts
-```
-
 ### Severity Classification
 
 Assign severity to each issue:
@@ -1071,251 +485,17 @@ Assign severity to each issue:
 
 Design-tell signals (Cat 8) and every Cat 11 Agent-Readiness result carry **no severity at all** — they are informational and never enter the issue list, the Readiness Score, or 2Prod.
 
-### Report Format
+### Report format
 
-The report has six top-level sections in this order. **2Prod is the headline** — printed first, before the Readiness Score. Numbering of individual findings is **global** (1..N across the whole report) so the user can say "Fix 3, 7, 12" unambiguously. Each finding uses the four-line format from **Report Rendering**.
-
-```
-## vibe2prod audit: <url>
-Mode: <remote | local-project> | Date: <today's date>
-
-### 2Prod: <color emoji> <band label> — <pct>% (<passed>/<denominator> gates passed)
-# denominator = 27 (remote) or 24 (local-project, Sec1–Sec3 deferred), minus any inconclusive gates
-Failed gates: <comma-separated list of failed gate IDs>
-
-# If any veto failed, replace the line above with:
-### 2Prod: 🔴 BLOCKED — veto failed: <V-id> (<short veto description>)
-# Do not show a percentage when blocked by veto.
-
-### Readiness Score: <0–100> <band emoji> "<band label>"
-<one-sentence TL;DR — what the score is being pulled down by, in plain language>
-
-### Category scores (technical summary for pros)
-Performance <n>/17 | Accessibility <n>/17 | Responsiveness <n>/17 | Security <n>/12 | SEO & Meta <n>/12 | AI-Slop <n>/8 | Robustness <n>/7 | Assets <n>/5 | HTML Quality <n>/3 | Stack Freshness <n>/2
-
-### Issues by impact
-
-#### Speed
- 1. 🔴 <headline> [<category>]
-    <plain-language impact sentence>           ← suppressed in --pro
-    <technical detail + metric + ref URL>
-    → <fix> Fix → +<n.n> pts
-
- 2. ...
-
-#### Responsiveness
- 3. ...
-
-#### Findability
-...
-
-#### Security & Trust
-...
-
-#### Polish
-...
-
-### Design-tell note
-# Only rendered when ≥ 2 design-tell signals were detected (see Cat 8). Informational — no severity, no points, no fix item.
-ℹ️ <n> of 6 common AI-default styling patterns detected: <comma-separated list>.
-None of these is wrong — the site is not penalized for them. They only matter if standing out
-visually is a goal for this site. Ask me to propose alternatives if you'd like to differentiate.
-
-### Agent readiness (Cat 11)
-# Always rendered. Report-only — no severity, no points, no effect on 2Prod or the Readiness Score.
-<AR1–AR7 block from Category 11, plus the neutral AI-crawler line, plus the optional
- Lighthouse agentic-browsing block when the installed Lighthouse is ≥ 13.3>
-
-### Technical Appendix
-
-#### Responsiveness matrix (Cat 9)
-<full matrix from Category 9 — xs/sm/md/lg/xl columns>
-
-#### Stack Freshness table (Cat 10)
-<full table from Category 10 — packages, installed, latest, severity>
-
-#### Raw tool outputs
-Lighthouse (perf, median of 3): .vibe2prod/artifacts/<run-id>/lh-perf-median.json
-Lighthouse (a11y, SEO):         .vibe2prod/artifacts/<run-id>/lh-a11y.json, lh-seo.json
-Lighthouse (agentic-browsing):  .vibe2prod/artifacts/<run-id>/lh-agentic.json   # only when LH ≥ 13.3
-axe-core report:                .vibe2prod/artifacts/<run-id>/axe-report.json
-W3C validation:                 .vibe2prod/artifacts/<run-id>/w3c-report.json
-Responsiveness screenshots:     .vibe2prod/artifacts/<run-id>/responsive/{xs,sm,md,lg,xl,xxl}.png
-Run journal:                    .vibe2prod/runs.jsonl
-```
-
-Groups with no findings are **omitted** from the "Issues by impact" block — if the site has no Findability issues, skip the whole `#### Findability` subsection rather than printing "no issues".
-
-After the report, prompt the user:
-> "Which issues should I fix? You can say `Fix 1-5, 7`, `Fix all`, `Skip`, or `Export fix-me.md` to hand the remaining work to another coding agent."
-
-In `--ship` mode, do not prompt — proceed directly to auto-fixing the eligible subset.
+The four-line finding format, the full report template (2Prod headline, Readiness Score, category scores, issues by impact group, design-tell note, Cat 11 block, technical appendix), and the prompt that follows the report are in [references/report-format.md](references/report-format.md). Read it before writing the report. The invariants: 2Prod is the headline and comes first; finding numbers are global (1..N) so the user can say "Fix 3, 7, 12"; impact groups without findings are omitted; every scored finding carries its `Fix → +N.N pts` from `gates.mjs`.
 
 ## Phase 4: Apply Fixes
 
-Parse the user's input to determine which issues to fix. Accepted formats:
-- `"Fix 1-5, 7, 11"` → fix issues 1, 2, 3, 4, 5, 7, 11
-- `"Fix all"` → fix all issues
-- `"Skip"` → skip fixing, end the audit (unless user asks to re-test)
-- Natural language like `"fix the first three and number 7"` → interpret accordingly
-
-For each issue to fix:
-
-**1. Auto-fixable** (you can modify source files directly):
-- Missing meta tags → add them to the HTML head
-- Missing alt texts → add descriptive alt text based on image context
-- Filename-style or generic-label alt text (`hero-2.jpg`, `image`, `logo`) → rewrite descriptively from the image's context; any other alt rewrite gets a diff and approval first
-- Image format conversion → convert using sharp/imagemin (respect 85% min quality, 90% default)
-- Add `loading="lazy"` / `fetchpriority="high"` attributes
-- Add `width`/`height` attributes to images
-- Add srcset for responsive images
-- Add `font-display: swap` to `@font-face` rules
-- Add preload hints for critical fonts
-- Fix heading hierarchy
-- Add `lang` attribute
-- Create basic sitemap.xml, robots.txt, manifest.json
-- Self-host Google Fonts (download and replace CDN references)
-- Add viewport meta tag
-- Add noscript fallback
-- Add `<meta name="theme-color">` (inferred from page background) and `color-scheme` on `<html>` for dark themes
-- Replace `transition: all` with the explicit property list (only when statically inferable from the hover/focus rules)
-- Add `autocomplete`, correct `type`, and `inputmode` to form inputs (show the diff — low-risk, but it changes browser behavior)
-- Restore focus rings: add a `:focus-visible` rule where `outline: none` stripped it (propose the CSS and wait for approval — it touches the design layer)
-- Convert fake JS navigation (`<div onClick>`-style) to real `<a href>` links (propose the diff and wait for approval — touches markup and JS behavior)
-- Add missing font weights/styles to the font loading (Google Fonts URL or `@font-face`) where the browser synthesizes fake bold/italic
-- Add `hyphens: auto` to justified body text (requires correct `lang`)
-- Generic link names (`click here`, `read more`) → propose a descriptive name and wait for approval; it is visible copy
-- `llms.txt`, internal 404 recovery links, and identity JSON-LD completion (Cat 11) → only on explicit request, never in `--ship`, and `sameAs` URLs always come from the user
-- Left-align centered long-form paragraphs (propose the diff and wait for approval — visible layout change)
-- **AI-slop fixes**: replace Lorem ipsum / placeholder headings with sensible drafts (and always ask the user to review), swap `example.com`/`yoursite.com` placeholders to real URLs (asking the user first), remove duplicate sections, fix hallucinated `og:url`, clear fake testimonial blocks.
-
-**2. Manual fix** (cannot be auto-fixed, provide instructions):
-- Server configuration (security headers, compression, caching)
-- HTTPS setup
-- Cookie consent implementation (complex, varies by provider)
-- CDN configuration
-- Hosting-level redirects
-
-For manual fixes, output clear step-by-step instructions specific to common setups (Vercel, Netlify, Cloudflare Pages, Apache, Nginx, Node.js).
-
-**Content-rewrite rule for AI-slop fixes:** Never silently replace user-visible copy. For any headline, body paragraph, testimonial, or CTA that you'd rewrite, propose the replacement, show a diff, and wait for approval. Missing alt text and placeholder `href="#"` fixes are exceptions — those can be auto-applied because the result is strictly better than the placeholder.
-
-After applying fixes, show a summary:
-
-```
-### Fixes Applied
-
-✓ Issue 1: Converted hero.png to WebP (90% quality)
-✓ Issue 3: Added og:image meta tag
-✓ Issue 7: Added loading="lazy" to below-fold images
-✗ Issue 4: Cannot auto-fix — requires server configuration (see instructions above)
-
-Applied: 3 | Manual: 1 | Total: 4
-```
-
-Then suggest: **"Want me to run the audit again to see the improvements? Say `Test again`."**
+Read [references/fixes.md](references/fixes.md): how to parse "Fix 1-5, 7", the catalog of auto-fixable vs. manual fixes, the content-rewrite rule, hosting-layer instructions, and the summary format. The rule that holds everywhere: **never silently replace user-visible copy** — propose the replacement, show a diff, wait for approval. Only a missing or filename-style `alt` and a placeholder `href="#"` may be fixed without asking, because the result is strictly better than the placeholder.
 
 ## Phase 4.5: fix-me.md Export
 
-`fix-me.md` is a copy-paste-ready brief for another coding agent — Cursor, Lovable, v0, Bolt, a junior dev, or a future Claude Code session. It is generated when:
-
-- The user explicitly asks: `Export fix-me.md`, `Generate handoff`, etc.
-- `--export` flag was passed on invocation.
-- `--ship` mode was used (always emitted in ship mode, describing the residual work).
-
-Write the file to `./fix-me.md` in the audited project (Local Project Mode) or to the current working directory (remote-URL mode).
-
-### Template
-
-```
-# Site production-readiness: remaining fixes
-
-Audited by vibe2prod on <YYYY-MM-DD>.
-Target: <url or "local project at <path>">
-2Prod: <color emoji> <band label> — <pct>% (<passed>/<denominator> gates) · Failed gates: <list> · Deferred (local): <list> · Inconclusive: <list>
-Readiness Score: <n>/100 (<band label>)
-
-## Project context
-
-- Framework: <detected framework + version>
-- Build command: <npm run build or equivalent>
-- Prod server command: <npm start / preview / npx serve>
-- Relevant config files: <list, e.g. next.config.js, tailwind.config.ts>
-
-## How to use this brief
-
-You are the coding agent that will complete the remaining fixes. Work through the items **in the listed order** — they are sorted with **2Prod-blocking gates first** (anything that flips a failing 2Prod gate to pass), then by impact-per-effort on the Readiness Score, with dependencies resolved before dependents. For each item:
-
-1. Read the "Where" and "What" fields.
-2. Apply the "Proposed change" — it's a literal diff where possible.
-3. Verify with the "How to verify" step.
-4. Only then move to the next item.
-
-Do NOT batch-apply items that touch the same file without verifying between them — if one change breaks the build, you need to know which one.
-
-## Fixes
-
-### 1. <Category> — <Short title>
-
-**Severity:** <CRITICAL / HIGH / MEDIUM / LOW>  · **Estimated gain:** +<n.n> pts
-
-**Where:** <file path + line number, or URL + CSS selector>
-
-**What:** <one-sentence plain-language description>
-
-**Technical detail:** <measurement, metric, threshold, reference URL>
-
-**Proposed change:**
-```diff
-- <old code>
-+ <new code>
-```
-(If not auto-applicable: prose instructions instead.)
-
-**How to verify:** <one concrete check the agent can run — a curl command, a Lighthouse re-run on this one audit, a Playwright assertion, a visual check>
-
----
-
-### 2. <...>
-
-(repeat per remaining issue)
-
-## Optional: agent readiness (not scored, not gated)
-
-<Only include this section if the user asked for the Cat 11 items or explicitly said to include
- them. Items carry no severity and no point value — write them as "Where / What / Proposed change /
- How to verify" like the rest, but omit the Severity and Estimated-gain lines so nobody mistakes
- them for scored work. Never include the AI-crawler policy note here: that is a business decision,
- not a task. Never include design-tell signals here at all.>
-
-## Out of scope for this brief
-
-<List anything the report flagged but is expected to be handled at the hosting / infra layer, e.g. security headers, HTTPS, caching policy. Point the user at the relevant provider (Vercel/Netlify/Cloudflare/Nginx).>
-
-## Re-audit after completion
-
-After applying all fixes, the user can re-run:
-
-```
-/vibe2prod <same url or from project root>
-```
-
-Expected after these fixes (if all items are applied correctly):
-- 2Prod: <predicted band emoji> <predicted band> — <predicted pct>%
-- Readiness Score: <n>/100
-```
-
-### Rules for generating fix-me.md
-
-- **Order items by points-per-effort.** Auto-fixable items and small-diff changes go first. Major-version migrations and architectural changes go last (or into "Out of scope").
-- **Prefer literal diffs over prose.** If you know the exact file and the exact change, write it as a fenced ` ```diff ` block. Prose instructions are a fallback.
-- **Include file paths as absolute-from-project-root.** Agents paste this brief into projects that may not share your working directory — `src/app/layout.tsx` is portable, `/Users/.../app/layout.tsx` is not.
-- **Never paraphrase external docs.** For migration guides, link the URL retrieved via the docs MCP in Phase 2. The receiving agent can follow the link.
-- **The "Expected score after" is a prediction based on the point values in the report.** Sum the `Fix → +N.N pts` values of every included item and add them to the current score. Cap at 100.
-- **The "Expected 2Prod after" is computed from the gate flips.** For each item in the brief, identify which (if any) 2Prod gate it flips from fail to pass. Recompute `pct = (current_passed + flipped_gates) / denominator × 100` (denominator = 27 remote / 24 local) and map to a band. If a veto gate is among the flips, the predicted 2Prod jumps from 🔴 BLOCKED to whatever the regular-gate count maps to. Remember the READY-band guard: if Resp1 is still failing, the prediction cannot exceed 🟡 NOT YET.
-- **Sort items: 2Prod-flipping items first**, then by points-per-effort. Within the 2Prod group, vetos before regular gates.
-- **Cat 11 and design-tells are not backlog.** Design-tell signals never appear in `fix-me.md`. Cat 11 items appear only in the separate "Optional: agent readiness" section, only when the user asked for them, and never with a point value — they cannot flip a gate, so they must not compete for the receiving agent's attention with work that can.
-- **Do not include items the user already chose to skip** (e.g., if they said "Fix 1-3, skip the rest", the skipped ones do not go into `fix-me.md`). The brief is for handing off the remaining *committed* work, not the entire backlog.
+`fix-me.md` is a copy-paste-ready brief for another coding agent. It is written when the user asks for it, when `--export` is passed, and always in `--ship` mode (describing the residual work). Template and ordering rules: [references/fix-me-template.md](references/fix-me-template.md).
 
 ## Phase 5: Re-Test & Compare
 

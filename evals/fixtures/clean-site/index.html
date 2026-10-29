@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clean Fixture — a small, finished landing page</title>
+  <meta name="description" content="A small static landing page used as the clean reference fixture for the vibe2prod test suite and evals.">
+  <meta property="og:title" content="Clean Fixture">
+  <meta property="og:description" content="The clean reference fixture for vibe2prod.">
+  <meta property="og:image" content="/og.png">
+  <link rel="canonical" href="/">
+  <link rel="icon" href="/favicon.svg">
+  <style>
+    body { font-family: Georgia, serif; margin: 0 auto; max-width: 40rem; padding: 0 1rem; font-size: 18px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+    nav a { display: inline-block; min-width: 44px; min-height: 44px; padding: 12px; }
+    img { max-width: 100%; height: auto; }
+    @media (prefers-reduced-motion: reduce) { * { animation: none; } }
+  </style>
+</head>
+<body>
+  <a class="sr-only" href="#main">Skip to content</a>
+  <nav><a href="/">Home</a><a href="/about">About</a></nav>
+  <main id="main">
+    <h1>A small, finished landing page</h1>
+    <p>This page exists so the test suite has a reference that should pass the responsive and secret checks. It keeps every paragraph readable, every link reachable, and every <a href="/about">inline link</a> inside a sentence.</p>
+    <img src="/photo.svg" width="600" height="400" alt="Sunset over a calm lake">
+  </main>
+</body>
+</html>
